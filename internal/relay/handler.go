@@ -1,13 +1,17 @@
 package relay
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,16 +27,94 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 type Handler struct {
-	client *http.Client
-	logger *log.Logger
+	client      *http.Client
+	logger      *log.Logger
+	dumpRequest bool
+	dumpScope   DumpScope
+	dumpSeq     atomic.Uint64
 }
 
-func NewHandler(client *http.Client, logger *log.Logger) *Handler {
-	return &Handler{client: client, logger: logger}
+type DumpScope uint8
+
+const (
+	DumpScopeNone DumpScope = 0
+	DumpScopeReq  DumpScope = 1 << iota
+	DumpScopeResp
+)
+
+func (s DumpScope) HasReq() bool {
+	return s&DumpScopeReq != 0
+}
+
+func (s DumpScope) HasResp() bool {
+	return s&DumpScopeResp != 0
+}
+
+func (s DumpScope) String() string {
+	switch {
+	case s.HasReq() && s.HasResp():
+		return "req,resp"
+	case s.HasReq():
+		return "req"
+	case s.HasResp():
+		return "resp"
+	default:
+		return "none"
+	}
+}
+
+func ParseDumpScope(raw string) (DumpScope, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return DumpScopeReq | DumpScopeResp, true
+	}
+
+	parts := strings.Split(strings.ToLower(raw), ",")
+	var scope DumpScope
+	valid := true
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		switch part {
+		case "":
+			continue
+		case "req":
+			scope |= DumpScopeReq
+		case "resp":
+			scope |= DumpScopeResp
+		default:
+			valid = false
+		}
+	}
+
+	if scope == DumpScopeNone {
+		return DumpScopeReq | DumpScopeResp, false
+	}
+
+	return scope, valid
+}
+
+func NewHandler(client *http.Client, logger *log.Logger, dumpRequest bool, dumpScope DumpScope) *Handler {
+	return &Handler{
+		client:      client,
+		logger:      logger,
+		dumpRequest: dumpRequest,
+		dumpScope:   dumpScope,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	dumpID := uint64(0)
+
+	if h.dumpRequest {
+		dumpID = h.dumpSeq.Add(1)
+		if h.dumpScope.HasReq() {
+			if err := h.logIncomingRequest(dumpID, r); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to read inbound request")
+				h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, "", http.StatusInternalServerError, time.Since(start).Milliseconds(), err.Error())
+				return
+			}
+		}
+	}
 
 	targetURL, err := parseTargetURL(r)
 	if err != nil {
@@ -57,15 +139,83 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	copyResponseHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	_, copyErr := io.Copy(w, resp.Body)
-	if copyErr != nil {
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), copyErr.Error())
-		return
+	if h.dumpRequest && h.dumpScope.HasResp() {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			writeError(w, http.StatusBadGateway, "failed to read upstream response")
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start).Milliseconds(), readErr.Error())
+			return
+		}
+		if err := h.logUpstreamResponse(dumpID, resp, respBody); err != nil {
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), err.Error())
+		}
+
+		copyResponseHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := w.Write(respBody); err != nil {
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), err.Error())
+			return
+		}
+	} else {
+		copyResponseHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		_, copyErr := io.Copy(w, resp.Body)
+		if copyErr != nil {
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), copyErr.Error())
+			return
+		}
 	}
 
 	h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), "")
+}
+
+func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
+	head, err := httputil.DumpRequest(r, false)
+	if err != nil {
+		return fmt.Errorf("dump request headers: %w", err)
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+
+	h.logger.Printf(
+		"---- REQUEST DUMP BEGIN id=%d remote=%s host=%s ----\n%s%s\n---- REQUEST DUMP END id=%d body_bytes=%d ----",
+		seq,
+		r.RemoteAddr,
+		r.Host,
+		string(head),
+		string(body),
+		seq,
+		len(body),
+	)
+	return nil
+}
+
+func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []byte) error {
+	respForDump := new(http.Response)
+	*respForDump = *resp
+	respForDump.Body = io.NopCloser(bytes.NewReader(body))
+
+	head, err := httputil.DumpResponse(respForDump, false)
+	if err != nil {
+		return fmt.Errorf("dump response headers: %w", err)
+	}
+
+	h.logger.Printf(
+		"---- RESPONSE DUMP BEGIN id=%d status=%s ----\n%s%s\n---- RESPONSE DUMP END id=%d body_bytes=%d ----",
+		seq,
+		resp.Status,
+		string(head),
+		string(body),
+		seq,
+		len(body),
+	)
+	return nil
 }
 
 func parseTargetURL(r *http.Request) (*url.URL, error) {

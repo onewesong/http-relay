@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"io"
 	"log"
 	"net/http"
@@ -90,7 +91,7 @@ func TestRelayForwardAndResponse(t *testing.T) {
 	defer upstream.Close()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0))
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -116,7 +117,7 @@ func TestRelayUnavailableUpstream(t *testing.T) {
 	t.Parallel()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 2 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0))
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -142,7 +143,7 @@ func TestRelayHeadRequest(t *testing.T) {
 	defer upstream.Close()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0))
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -159,5 +160,142 @@ func TestRelayHeadRequest(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) != 0 {
 		t.Fatalf("head should not return body, got=%q", string(body))
+	}
+}
+
+func TestRelayDumpReqResp(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "ping-body" {
+			t.Fatalf("upstream body=%q", string(body))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	logger := log.New(&logs, "", 0)
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	handler := NewHandler(client, logger, true, DumpScopeReq|DumpScopeResp)
+	relay := httptest.NewServer(handler)
+	defer relay.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, relay.URL+"/"+upstream.URL, strings.NewReader("ping-body"))
+	req.Header.Set("Content-Type", "text/plain")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	gotLog := logs.String()
+	if !strings.Contains(gotLog, "REQUEST DUMP BEGIN") ||
+		!strings.Contains(gotLog, "REQUEST DUMP END") ||
+		!strings.Contains(gotLog, "RESPONSE DUMP BEGIN") ||
+		!strings.Contains(gotLog, "RESPONSE DUMP END") ||
+		!strings.Contains(gotLog, "ping-body") ||
+		!strings.Contains(gotLog, "ok") {
+		t.Fatalf("dump log not found, logs=%q", gotLog)
+	}
+}
+
+func TestRelayDumpReqOnly(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	logger := log.New(&logs, "", 0)
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	handler := NewHandler(client, logger, true, DumpScopeReq)
+	relay := httptest.NewServer(handler)
+	defer relay.Close()
+
+	resp, err := http.Get(relay.URL + "/" + upstream.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	gotLog := logs.String()
+	if !strings.Contains(gotLog, "REQUEST DUMP BEGIN") {
+		t.Fatalf("request dump missing, logs=%q", gotLog)
+	}
+	if strings.Contains(gotLog, "RESPONSE DUMP BEGIN") {
+		t.Fatalf("response dump should be disabled in req scope, logs=%q", gotLog)
+	}
+}
+
+func TestRelayDumpRespOnly(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	logger := log.New(&logs, "", 0)
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	handler := NewHandler(client, logger, true, DumpScopeResp)
+	relay := httptest.NewServer(handler)
+	defer relay.Close()
+
+	resp, err := http.Get(relay.URL + "/" + upstream.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	gotLog := logs.String()
+	if strings.Contains(gotLog, "REQUEST DUMP BEGIN") {
+		t.Fatalf("request dump should be disabled in resp scope, logs=%q", gotLog)
+	}
+	if !strings.Contains(gotLog, "RESPONSE DUMP BEGIN") {
+		t.Fatalf("response dump missing, logs=%q", gotLog)
+	}
+}
+
+func TestParseDumpScope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		want   DumpScope
+		wantOK bool
+	}{
+		{name: "empty default", input: "", want: DumpScopeReq | DumpScopeResp, wantOK: true},
+		{name: "req", input: "req", want: DumpScopeReq, wantOK: true},
+		{name: "resp", input: "resp", want: DumpScopeResp, wantOK: true},
+		{name: "req,resp", input: "req,resp", want: DumpScopeReq | DumpScopeResp, wantOK: true},
+		{name: "resp,req", input: "resp,req", want: DumpScopeReq | DumpScopeResp, wantOK: true},
+		{name: "invalid", input: "abc", want: DumpScopeReq | DumpScopeResp, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := ParseDumpScope(tt.input)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("input=%q got=(%s,%v) want=(%s,%v)", tt.input, got.String(), ok, tt.want.String(), tt.wantOK)
+			}
+		})
 	}
 }

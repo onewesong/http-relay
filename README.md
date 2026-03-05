@@ -35,6 +35,12 @@ go run ./cmd/http-relay
 curl -i "http://127.0.0.1:8080/https://example.com"
 ```
 
+开启请求抓包输出（打印收到的请求头和 body）：
+
+```bash
+go run ./cmd/http-relay -w
+```
+
 ## 监听配置
 
 使用以下环境变量：
@@ -46,6 +52,24 @@ curl -i "http://127.0.0.1:8080/https://example.com"
 
 ```bash
 HOST=0.0.0.0 PORT=9000 go run ./cmd/http-relay
+```
+
+## 启动参数
+
+- `-w`：开启流量转储输出（配合 `WIRE_SCOPE` 控制范围）。
+
+### `WIRE_SCOPE`（仅在 `-w` 开启时生效）
+
+- `req`：只打印请求
+- `resp`：只打印响应
+- `req,resp`：同时打印请求和响应（默认）
+
+示例：
+
+```bash
+WIRE_SCOPE=req go run ./cmd/http-relay -w
+WIRE_SCOPE=resp go run ./cmd/http-relay -w
+WIRE_SCOPE=req,resp go run ./cmd/http-relay -w
 ```
 
 ## 路由规则

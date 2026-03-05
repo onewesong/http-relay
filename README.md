@@ -13,6 +13,7 @@ A lightweight HTTP relay tool.
 English | [简体中文](./README.zh-CN.md)
 
 </div>
+<img width="1470" height="887" alt="image" src="https://github.com/user-attachments/assets/93c52569-12d5-44cc-9bcf-81224a101a90" />
 
 `http-relay` listens on local HTTP and relays requests in this format:
 

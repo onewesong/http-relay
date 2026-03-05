@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"http-relay/internal/relay"
+	"github.com/onewesong/http-relay/internal/relay"
 )
 
 func main() {

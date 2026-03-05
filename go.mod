@@ -1,4 +1,4 @@
-module http-relay
+module github.com/onewesong/http-relay
 
 go 1.23.0
 

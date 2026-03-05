@@ -31,6 +31,7 @@ type Handler struct {
 	logger      *log.Logger
 	dumpRequest bool
 	dumpScope   DumpScope
+	maskAuth    bool
 	dumpSeq     atomic.Uint64
 }
 
@@ -92,12 +93,13 @@ func ParseDumpScope(raw string) (DumpScope, bool) {
 	return scope, valid
 }
 
-func NewHandler(client *http.Client, logger *log.Logger, dumpRequest bool, dumpScope DumpScope) *Handler {
+func NewHandler(client *http.Client, logger *log.Logger, dumpRequest bool, dumpScope DumpScope, maskAuth bool) *Handler {
 	return &Handler{
 		client:      client,
 		logger:      logger,
 		dumpRequest: dumpRequest,
 		dumpScope:   dumpScope,
+		maskAuth:    maskAuth,
 	}
 }
 
@@ -170,7 +172,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
-	head, err := httputil.DumpRequest(r, false)
+	dumpReq := new(http.Request)
+	*dumpReq = *r
+	dumpReq.Header = cloneHeader(r.Header)
+	if h.maskAuth {
+		maskAuthHeaders(dumpReq.Header)
+	}
+
+	head, err := httputil.DumpRequest(dumpReq, false)
 	if err != nil {
 		return fmt.Errorf("dump request headers: %w", err)
 	}
@@ -194,6 +203,34 @@ func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
 		len(body),
 	)
 	return nil
+}
+
+func maskAuthHeaders(h http.Header) {
+	for _, key := range []string{"Authorization", "Proxy-Authorization"} {
+		values := h.Values(key)
+		if len(values) == 0 {
+			continue
+		}
+		masked := make([]string, 0, len(values))
+		for _, v := range values {
+			masked = append(masked, maskAuthorizationLike(v))
+		}
+		h[key] = masked
+	}
+
+	for _, key := range []string{"Cookie", "X-Api-Key", "X-Auth-Token"} {
+		if h.Get(key) != "" {
+			h.Set(key, "<redacted>")
+		}
+	}
+}
+
+func maskAuthorizationLike(v string) string {
+	parts := strings.Fields(v)
+	if len(parts) >= 2 {
+		return parts[0] + " <redacted>"
+	}
+	return "<redacted>"
 }
 
 func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []byte) error {

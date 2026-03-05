@@ -21,6 +21,7 @@ func main() {
 	}
 
 	wire := flag.Bool("w", false, "dump inbound request headers and body")
+	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
 	flag.Parse()
 
 	logger := log.Default()
@@ -43,7 +44,7 @@ func main() {
 		Timeout:   120 * time.Second,
 	}
 
-	handler := relay.NewHandler(client, logger, *wire, wireScope)
+	handler := relay.NewHandler(client, logger, *wire, wireScope, *maskAuth)
 
 	server := &http.Server{
 		Addr:              addr,
@@ -51,7 +52,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Printf("http-relay starting on %s proxy_mode=%s wire_dump=%t wire_scope=%s", addr, proxySummary, *wire, wireScope)
+	logger.Printf("http-relay starting on %s proxy_mode=%s wire_dump=%t wire_scope=%s mask_auth=%t", addr, proxySummary, *wire, wireScope, *maskAuth)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server stopped: %v", err)
 	}

@@ -91,7 +91,7 @@ func TestRelayForwardAndResponse(t *testing.T) {
 	defer upstream.Close()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -117,7 +117,7 @@ func TestRelayUnavailableUpstream(t *testing.T) {
 	t.Parallel()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 2 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -143,7 +143,7 @@ func TestRelayHeadRequest(t *testing.T) {
 	defer upstream.Close()
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp)
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -179,7 +179,7 @@ func TestRelayDumpReqResp(t *testing.T) {
 	var logs bytes.Buffer
 	logger := log.New(&logs, "", 0)
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, logger, true, DumpScopeReq|DumpScopeResp)
+	handler := NewHandler(client, logger, true, DumpScopeReq|DumpScopeResp, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -216,7 +216,7 @@ func TestRelayDumpReqOnly(t *testing.T) {
 	var logs bytes.Buffer
 	logger := log.New(&logs, "", 0)
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, logger, true, DumpScopeReq)
+	handler := NewHandler(client, logger, true, DumpScopeReq, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -249,7 +249,7 @@ func TestRelayDumpRespOnly(t *testing.T) {
 	var logs bytes.Buffer
 	logger := log.New(&logs, "", 0)
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
-	handler := NewHandler(client, logger, true, DumpScopeResp)
+	handler := NewHandler(client, logger, true, DumpScopeResp, false)
 	relay := httptest.NewServer(handler)
 	defer relay.Close()
 
@@ -268,6 +268,49 @@ func TestRelayDumpRespOnly(t *testing.T) {
 	}
 	if !strings.Contains(gotLog, "RESPONSE DUMP BEGIN") {
 		t.Fatalf("response dump missing, logs=%q", gotLog)
+	}
+}
+
+func TestRelayDumpMaskAuthHeaders(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	logger := log.New(&logs, "", 0)
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	handler := NewHandler(client, logger, true, DumpScopeReq, true)
+	relay := httptest.NewServer(handler)
+	defer relay.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, relay.URL+"/"+upstream.URL, nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Proxy-Authorization", "Basic dXNlcjpwYXNz")
+	req.Header.Set("Cookie", "sid=secret-cookie")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	gotLog := logs.String()
+	if !strings.Contains(gotLog, "Authorization: Bearer <redacted>") {
+		t.Fatalf("authorization header not masked, logs=%q", gotLog)
+	}
+	if !strings.Contains(gotLog, "Proxy-Authorization: Basic <redacted>") {
+		t.Fatalf("proxy-authorization header not masked, logs=%q", gotLog)
+	}
+	if !strings.Contains(gotLog, "Cookie: <redacted>") {
+		t.Fatalf("cookie header not masked, logs=%q", gotLog)
+	}
+	if strings.Contains(gotLog, "secret-token") || strings.Contains(gotLog, "dXNlcjpwYXNz") || strings.Contains(gotLog, "secret-cookie") {
+		t.Fatalf("sensitive values leaked, logs=%q", gotLog)
 	}
 }
 

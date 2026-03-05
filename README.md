@@ -53,6 +53,14 @@ HOST=0.0.0.0 PORT=9000 http-relay
 http-relay -w
 ```
 
+使用 `-mask-auth` 对请求头中的认证信息做脱敏（建议和 `-w` 一起使用）：
+
+```bash
+http-relay -w -mask-auth
+```
+
+当前会脱敏的请求头包括：`Authorization`、`Proxy-Authorization`、`Cookie`、`X-Api-Key`、`X-Auth-Token`。
+
 可用 `WIRE_SCOPE` 控制输出范围（仅在 `-w` 开启时生效）：
 
 - `req`：只输出请求

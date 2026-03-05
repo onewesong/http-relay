@@ -28,6 +28,12 @@ http-relay
 curl -i "http://127.0.0.1:8080/https://example.com"
 ```
 
+查看版本：
+
+```bash
+http-relay version
+```
+
 ## 基本配置（环境变量）
 
 - `HOST`：监听地址，默认 `127.0.0.1`

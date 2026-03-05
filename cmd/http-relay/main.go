@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,7 +12,14 @@ import (
 	"github.com/onewesong/http-relay/internal/relay"
 )
 
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
+		return
+	}
+
 	wire := flag.Bool("w", false, "dump inbound request headers and body")
 	flag.Parse()
 

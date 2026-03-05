@@ -47,7 +47,7 @@ jobs:
             mkdir -p "$outdir"
 
             GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
-              go build -trimpath -ldflags="-s -w" \
+              go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
               -o "$outdir/$bin" ./cmd/http-relay
 
             if [ "$goos" = "windows" ]; then

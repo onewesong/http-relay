@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/onewesong/http-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/onewesong/http-relay/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/onewesong/http-relay)](https://github.com/onewesong/http-relay/releases)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-onewesong%2Fhttp--relay-blue)](https://github.com/onewesong/http-relay/pkgs/container/http-relay)
 [![License](https://img.shields.io/github/license/onewesong/http-relay)](https://github.com/onewesong/http-relay/blob/main/LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/onewesong/http-relay)
 
@@ -24,6 +25,17 @@
 ```bash
 go install github.com/onewesong/http-relay/cmd/http-relay@latest
 ```
+
+Docker：
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/onewesong/http-relay:latest
+```
+
+GitHub Actions 镜像发布规则：
+
+- 推送到 `main`：发布 `ghcr.io/onewesong/http-relay:edge` 和 `sha-*`
+- 推送 `v1.2.3` 这类标签：发布 `v1.2.3`、`1.2`、`1`、`latest`
 
 ## 快速开始
 

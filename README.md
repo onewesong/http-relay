@@ -6,6 +6,7 @@ A lightweight HTTP relay tool.
 
 [![CI](https://github.com/onewesong/http-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/onewesong/http-relay/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/onewesong/http-relay)](https://github.com/onewesong/http-relay/releases)
+[![Docker Image](https://img.shields.io/badge/ghcr.io-onewesong%2Fhttp--relay-blue)](https://github.com/onewesong/http-relay/pkgs/container/http-relay)
 [![License](https://img.shields.io/github/license/onewesong/http-relay)](https://github.com/onewesong/http-relay/blob/main/LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/onewesong/http-relay)
 <a href="https://llmapis.com?source=https%3A%2F%2Fgithub.com%2Fonewesong%2Fhttp-relay" target="_blank"><img src="https://llmapis.com/api/badge/onewesong/http-relay" alt="LLMAPIS" width="20" /></a>
@@ -26,6 +27,17 @@ It forwards the request to the target absolute URL in the path and returns the u
 ```bash
 go install github.com/onewesong/http-relay/cmd/http-relay@latest
 ```
+
+Docker:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/onewesong/http-relay:latest
+```
+
+GitHub Actions image publishing:
+
+- push to `main`: publish `ghcr.io/onewesong/http-relay:edge` and `sha-*`
+- push tag like `v1.2.3`: publish `v1.2.3`, `1.2`, `1`, `latest`
 
 ## Quick Start
 

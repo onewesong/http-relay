@@ -131,3 +131,8 @@ Target URL must include `http://` or `https://`.
 - `400`: missing or invalid target URL
 - `502`: upstream connection failure or timeout
 - `500`: internal server error
+
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=onewesong/http-relay&type=date&legend=top-left)](https://www.star-history.com/)

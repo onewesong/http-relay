@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,26 @@ func main() {
 
 	wire := flag.Bool("w", false, "dump inbound request headers and body")
 	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
+	flag.Usage = func() {
+		name := filepath.Base(os.Args[0])
+		out := flag.CommandLine.Output()
+
+		fmt.Fprintf(out, "Usage:\n")
+		fmt.Fprintf(out, "  %s [flags]\n", name)
+		fmt.Fprintf(out, "  %s version\n\n", name)
+
+		fmt.Fprintf(out, "Flags:\n")
+		flag.PrintDefaults()
+
+		fmt.Fprintf(out, "\nEnvironment Variables:\n")
+		fmt.Fprintf(out, "  HOST                  listen host (default: 127.0.0.1)\n")
+		fmt.Fprintf(out, "  PORT                  listen port (default: 8080)\n")
+		fmt.Fprintf(out, "  WIRE_SCOPE            dump scope when -w is enabled: req, resp, req,resp (default)\n")
+		fmt.Fprintf(out, "  ALL_PROXY             proxy for both HTTP and HTTPS, highest priority\n")
+		fmt.Fprintf(out, "  HTTP_PROXY            upstream proxy for HTTP targets\n")
+		fmt.Fprintf(out, "  HTTPS_PROXY           upstream proxy for HTTPS targets\n")
+		fmt.Fprintf(out, "  NO_PROXY              bypass proxy for matching hosts\n")
+	}
 	flag.Parse()
 
 	logger := log.Default()

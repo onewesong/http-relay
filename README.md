@@ -59,16 +59,40 @@ Check version:
 http-relay version
 ```
 
-## Configuration (Environment Variables)
+Reverse proxy to a fixed upstream:
 
-- `HOST`: listen host (default: `127.0.0.1`)
-- `PORT`: listen port (default: `8080`)
+```bash
+http-relay --mode reverse:https://api.example.com
+curl -i "http://127.0.0.1:8080/v1/users"
+```
+
+The request above is forwarded to `https://api.example.com/v1/users`.
+
+## Command Options
+
+- `--mode`: target mode, supports `regular` (default) and `reverse:<url>`
+- `--listen`: listen address, overrides `--host` / `--port`
+- `--host`: listen host (defaults to `HOST`, then `127.0.0.1`)
+- `--port`: listen port (defaults to `PORT`, then `8080`)
+- `--timeout`: upstream request timeout (default: `120s`)
+- `-w` / `--dump`: dump request/response traffic
+- `--dump-scope`: dump scope, supports `req`, `resp`, `req,resp`
+- `--mask-auth`: mask auth-related request headers in request dump
+- `--add-header`: add an upstream request header, repeatable
+- `--modify-header`: set/overwrite an upstream request header, repeatable
 
 Example:
 
 ```bash
-HOST=0.0.0.0 PORT=9000 http-relay
+http-relay --listen 0.0.0.0:9000
+http-relay --mode reverse:https://api.example.com --timeout 30s
 ```
+
+## Configuration (Environment Variables)
+
+- `HOST`: listen host (default: `127.0.0.1`)
+- `PORT`: listen port (default: `8080`)
+- `WIRE_SCOPE`: compatibility fallback for `--dump-scope`
 
 ## Traffic Dump
 
@@ -99,6 +123,30 @@ Examples:
 WIRE_SCOPE=req http-relay -w
 WIRE_SCOPE=resp http-relay -w
 WIRE_SCOPE=req,resp http-relay -w
+http-relay --dump --dump-scope req,resp
+```
+
+## Header Rewrite
+
+Add a request header:
+
+```bash
+http-relay --add-header "X-Debug: 1"
+```
+
+Set or overwrite a request header:
+
+```bash
+http-relay --modify-header "User-Agent: http-relay"
+```
+
+Use with reverse proxy mode:
+
+```bash
+http-relay \
+  --mode reverse:https://api.example.com \
+  --add-header "X-Trace-Source: local" \
+  --modify-header "User-Agent: http-relay"
 ```
 
 ## Upstream Proxy
@@ -119,12 +167,21 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 
 ## Route Rule
 
-Only supports `/{absolute-url}`, for example:
+Default `regular` mode supports `/{absolute-url}`, for example:
 
 - `http://127.0.0.1:8080/https://example.com`
 - `http://127.0.0.1:8080/http://httpbin.org/post`
 
 Target URL must include `http://` or `https://`.
+
+`reverse:<url>` mode joins the incoming path and query onto a fixed upstream:
+
+```bash
+http-relay --mode reverse:https://api.example.com/base
+curl "http://127.0.0.1:8080/v1/users?q=go"
+```
+
+The target is `https://api.example.com/base/v1/users?q=go`.
 
 ## Error Codes
 

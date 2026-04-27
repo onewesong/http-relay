@@ -29,10 +29,20 @@ var hopByHopHeaders = map[string]struct{}{
 type Handler struct {
 	client      *http.Client
 	logger      *log.Logger
+	targetMode  TargetMode
+	headerRules []HeaderRule
 	dumpRequest bool
 	dumpScope   DumpScope
 	maskAuth    bool
 	dumpSeq     atomic.Uint64
+}
+
+type HandlerOptions struct {
+	TargetMode  TargetMode
+	HeaderRules []HeaderRule
+	DumpRequest bool
+	DumpScope   DumpScope
+	MaskAuth    bool
 }
 
 type DumpScope uint8
@@ -94,12 +104,27 @@ func ParseDumpScope(raw string) (DumpScope, bool) {
 }
 
 func NewHandler(client *http.Client, logger *log.Logger, dumpRequest bool, dumpScope DumpScope, maskAuth bool) *Handler {
+	return NewHandlerWithOptions(client, logger, HandlerOptions{
+		TargetMode:  DefaultTargetMode(),
+		DumpRequest: dumpRequest,
+		DumpScope:   dumpScope,
+		MaskAuth:    maskAuth,
+	})
+}
+
+func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts HandlerOptions) *Handler {
+	if opts.DumpScope == DumpScopeNone {
+		opts.DumpScope = DumpScopeReq | DumpScopeResp
+	}
+
 	return &Handler{
 		client:      client,
 		logger:      logger,
-		dumpRequest: dumpRequest,
-		dumpScope:   dumpScope,
-		maskAuth:    maskAuth,
+		targetMode:  opts.TargetMode,
+		headerRules: append([]HeaderRule(nil), opts.HeaderRules...),
+		dumpRequest: opts.DumpRequest,
+		dumpScope:   opts.DumpScope,
+		maskAuth:    opts.MaskAuth,
 	}
 }
 
@@ -112,23 +137,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.dumpScope.HasReq() {
 			if err := h.logIncomingRequest(dumpID, r); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-				h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, "", http.StatusInternalServerError, time.Since(start).Milliseconds(), err.Error())
+				h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, "", http.StatusInternalServerError, time.Since(start).Milliseconds(), 0, err.Error())
 				return
 			}
 		}
 	}
 
-	targetURL, err := parseTargetURL(r)
+	targetURL, err := h.targetMode.TargetURL(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, "", http.StatusBadRequest, time.Since(start).Milliseconds(), err.Error())
+		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, "", http.StatusBadRequest, time.Since(start).Milliseconds(), 0, err.Error())
 		return
 	}
 
 	upstreamReq, err := h.buildUpstreamRequest(r, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start).Milliseconds(), err.Error())
+		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start).Milliseconds(), 0, err.Error())
 		return
 	}
 
@@ -136,39 +161,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, msg := mapUpstreamError(err)
 		writeError(w, status, msg)
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), status, time.Since(start).Milliseconds(), err.Error())
+		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), status, time.Since(start).Milliseconds(), 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
+	var bytesWritten int64
 	if h.dumpRequest && h.dumpScope.HasResp() {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			writeError(w, http.StatusBadGateway, "failed to read upstream response")
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start).Milliseconds(), readErr.Error())
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start).Milliseconds(), 0, readErr.Error())
 			return
 		}
 		if err := h.logUpstreamResponse(dumpID, resp, respBody); err != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), err.Error())
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), 0, err.Error())
 		}
 
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		if _, err := w.Write(respBody); err != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), err.Error())
+		n, err := w.Write(respBody)
+		bytesWritten = int64(n)
+		if err != nil {
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, err.Error())
 			return
 		}
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		_, copyErr := io.Copy(w, resp.Body)
+		n, copyErr := io.Copy(w, resp.Body)
+		bytesWritten = n
 		if copyErr != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), copyErr.Error())
+			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, copyErr.Error())
 			return
 		}
 	}
 
-	h.logger.Printf("method=%s target=%q status=%d duration_ms=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), "")
+	h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, "")
 }
 
 func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
@@ -289,6 +318,7 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, targetURL *url.URL) (*ht
 	upstreamReq.Header = cloneHeader(r.Header)
 	removeHopByHopHeaders(upstreamReq.Header)
 	setForwardedHeaders(upstreamReq, r)
+	ApplyHeaderRules(upstreamReq, h.headerRules)
 	upstreamReq.ContentLength = r.ContentLength
 	return upstreamReq, nil
 }

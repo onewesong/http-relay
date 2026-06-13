@@ -22,6 +22,21 @@
 
 ## 安装
 
+安装最新版 Release 二进制：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | sh
+```
+
+安装指定版本，或安装到当前用户可写目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | VERSION=v1.2.3 sh
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | BINDIR="$HOME/.local/bin" sh
+```
+
+从源码安装：
+
 ```bash
 go install github.com/onewesong/http-relay/cmd/http-relay@latest
 ```

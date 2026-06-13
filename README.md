@@ -24,6 +24,21 @@ It forwards the request to the target absolute URL in the path and returns the u
 
 ## Installation
 
+Install the latest release binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | sh
+```
+
+Install a specific version or install into a user-writable directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | VERSION=v1.2.3 sh
+curl -fsSL https://raw.githubusercontent.com/onewesong/http-relay/main/install.sh | BINDIR="$HOME/.local/bin" sh
+```
+
+Build from source:
+
 ```bash
 go install github.com/onewesong/http-relay/cmd/http-relay@latest
 ```

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -317,31 +316,9 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, targetURL *url.URL) (*ht
 
 	upstreamReq.Header = cloneHeader(r.Header)
 	removeHopByHopHeaders(upstreamReq.Header)
-	setForwardedHeaders(upstreamReq, r)
 	ApplyHeaderRules(upstreamReq, h.headerRules)
 	upstreamReq.ContentLength = r.ContentLength
 	return upstreamReq, nil
-}
-
-func setForwardedHeaders(upstreamReq *http.Request, originalReq *http.Request) {
-	clientIP := clientIPFromRemoteAddr(originalReq.RemoteAddr)
-	if clientIP != "" {
-		if prior := originalReq.Header.Get("X-Forwarded-For"); prior != "" {
-			upstreamReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-		} else {
-			upstreamReq.Header.Set("X-Forwarded-For", clientIP)
-		}
-	}
-	upstreamReq.Header.Set("X-Forwarded-Proto", "http")
-	upstreamReq.Header.Set("X-Forwarded-Host", originalReq.Host)
-}
-
-func clientIPFromRemoteAddr(remoteAddr string) string {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return ""
-	}
-	return host
 }
 
 func cloneHeader(h http.Header) http.Header {

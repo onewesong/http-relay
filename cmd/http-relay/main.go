@@ -30,7 +30,7 @@ func main() {
 	listen := flag.String("listen", "", "listen address, overrides --host and --port")
 	host := flag.String("host", envOrDefault("HOST", "127.0.0.1"), "listen host")
 	port := flag.String("port", envOrDefault("PORT", "8080"), "listen port")
-	timeout := flag.Duration("timeout", 120*time.Second, "upstream request timeout")
+	timeout := flag.Duration("timeout", 600*time.Second, "upstream request timeout; 0 means no timeout")
 	dumpScopeRaw := flag.String("dump-scope", os.Getenv("WIRE_SCOPE"), "dump scope when dump is enabled: req, resp, req,resp")
 	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
 
@@ -76,8 +76,8 @@ func main() {
 
 	logger := log.Default()
 
-	if *timeout <= 0 {
-		logger.Fatalf("timeout must be greater than zero")
+	if *timeout < 0 {
+		logger.Fatalf("timeout must be >= 0 (0 means no timeout)")
 	}
 
 	mode, err := relay.ParseMode(*modeRaw)

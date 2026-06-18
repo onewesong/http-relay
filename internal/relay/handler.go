@@ -28,6 +28,7 @@ var hopByHopHeaders = map[string]struct{}{
 type Handler struct {
 	client      *http.Client
 	logger      *log.Logger
+	palette     Palette
 	targetMode  TargetMode
 	headerRules []HeaderRule
 	dumpRequest bool
@@ -42,6 +43,7 @@ type HandlerOptions struct {
 	DumpRequest bool
 	DumpScope   DumpScope
 	MaskAuth    bool
+	Palette     Palette
 }
 
 type DumpScope uint8
@@ -119,6 +121,7 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 	return &Handler{
 		client:      client,
 		logger:      logger,
+		palette:     opts.Palette,
 		targetMode:  opts.TargetMode,
 		headerRules: append([]HeaderRule(nil), opts.HeaderRules...),
 		dumpRequest: opts.DumpRequest,
@@ -136,7 +139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.dumpScope.HasReq() {
 			if err := h.logIncomingRequest(dumpID, r); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-				h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, "", http.StatusInternalServerError, time.Since(start).Milliseconds(), 0, err.Error())
+				h.logAccess(dumpID, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 				return
 			}
 		}
@@ -145,14 +148,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL, err := h.targetMode.TargetURL(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, "", http.StatusBadRequest, time.Since(start).Milliseconds(), 0, err.Error())
+		h.logAccess(dumpID, r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
 		return
 	}
 
 	upstreamReq, err := h.buildUpstreamRequest(r, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start).Milliseconds(), 0, err.Error())
+		h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return
 	}
 
@@ -160,7 +163,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, msg := mapUpstreamError(err)
 		writeError(w, status, msg)
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), status, time.Since(start).Milliseconds(), 0, err.Error())
+		h.logAccess(dumpID, r.Method, targetURL.String(), status, time.Since(start), 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -170,11 +173,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			writeError(w, http.StatusBadGateway, "failed to read upstream response")
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start).Milliseconds(), 0, readErr.Error())
+			h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
 			return
 		}
 		if err := h.logUpstreamResponse(dumpID, resp, respBody); err != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), 0, err.Error())
+			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), 0, err.Error())
 		}
 
 		copyResponseHeaders(w.Header(), resp.Header)
@@ -182,7 +185,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		n, err := w.Write(respBody)
 		bytesWritten = int64(n)
 		if err != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, err.Error())
+			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, err.Error())
 			return
 		}
 	} else {
@@ -191,12 +194,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		n, copyErr := io.Copy(w, resp.Body)
 		bytesWritten = n
 		if copyErr != nil {
-			h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, copyErr.Error())
+			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, copyErr.Error())
 			return
 		}
 	}
 
-	h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q", r.Method, targetURL.String(), resp.StatusCode, time.Since(start).Milliseconds(), bytesWritten, "")
+	h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
+}
+
+// logAccess emits one access-log entry. With color enabled it renders a layered,
+// colorized line; otherwise it falls back to the machine-readable key=value form.
+func (h *Handler) logAccess(seq uint64, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
+	p := h.palette
+	if !p.Enabled() {
+		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q",
+			method, target, status, dur.Milliseconds(), bytes, errMsg)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString(p.Timestamp(time.Now()))
+	b.WriteByte(' ')
+	if seq > 0 {
+		b.WriteString(p.Dim(fmt.Sprintf("#%d", seq)))
+		b.WriteByte(' ')
+	}
+	fmt.Fprintf(&b, "%s %s %s %s",
+		p.Method(fmt.Sprintf("%-6s", method)),
+		p.Status(status),
+		p.Duration(dur),
+		p.Dim(fmt.Sprintf("%8s", formatBytes(bytes))),
+	)
+	if target != "" {
+		b.WriteByte(' ')
+		b.WriteString(p.URL(target))
+	}
+	if errMsg != "" {
+		b.WriteString("  ")
+		b.WriteString(p.Error("✗ " + errMsg))
+	}
+	h.logger.Print(b.String())
 }
 
 func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
@@ -220,6 +257,12 @@ func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
+	if h.palette.Enabled() {
+		h.logger.Print(h.renderDump(true, seq, string(head), body,
+			fmt.Sprintf("remote=%s host=%s", r.RemoteAddr, r.Host)))
+		return nil
+	}
+
 	h.logger.Printf(
 		"---- REQUEST DUMP BEGIN id=%d remote=%s host=%s ----\n%s%s\n---- REQUEST DUMP END id=%d body_bytes=%d ----",
 		seq,
@@ -231,6 +274,42 @@ func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
 		len(body),
 	)
 	return nil
+}
+
+// renderDump builds a colored, indented dump block for one request or response.
+func (h *Handler) renderDump(isRequest bool, seq uint64, head string, body []byte, meta string) string {
+	p := h.palette
+	arrow, label := p.RespArrow(), "response"
+	if isRequest {
+		arrow, label = p.ReqArrow(), "request"
+	}
+
+	var b strings.Builder
+	b.WriteString(p.Timestamp(time.Now()))
+	b.WriteByte(' ')
+	b.WriteString(p.Dim(fmt.Sprintf("#%d", seq)))
+	fmt.Fprintf(&b, " %s %s  %s", arrow, p.Bold(label), p.Dim(meta))
+
+	lines := strings.Split(strings.TrimRight(head, "\r\n"), "\n")
+	for i, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		if i == 0 {
+			b.WriteString("\n    " + p.Bold(line)) // request/status line
+			continue
+		}
+		b.WriteString("\n    " + p.Header(line))
+	}
+
+	if len(body) > 0 {
+		b.WriteString("\n    " + p.Dim(fmt.Sprintf("body=%s", formatBytes(int64(len(body))))))
+		for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+			b.WriteString("\n    " + line)
+		}
+	}
+	return b.String()
 }
 
 func maskAuthHeaders(h http.Header) {
@@ -269,6 +348,12 @@ func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []by
 	head, err := httputil.DumpResponse(respForDump, false)
 	if err != nil {
 		return fmt.Errorf("dump response headers: %w", err)
+	}
+
+	if h.palette.Enabled() {
+		h.logger.Print(h.renderDump(false, seq, string(head), body,
+			fmt.Sprintf("status=%s", resp.Status)))
+		return nil
 	}
 
 	h.logger.Printf(

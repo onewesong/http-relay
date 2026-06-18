@@ -33,6 +33,7 @@ func main() {
 	timeout := flag.Duration("timeout", 600*time.Second, "upstream request timeout; 0 means no timeout")
 	dumpScopeRaw := flag.String("dump-scope", os.Getenv("WIRE_SCOPE"), "dump scope when dump is enabled: req, resp, req,resp")
 	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
+	colorRaw := flag.String("color", "auto", "colorize output: auto, always, never")
 
 	flag.BoolVar(&dump, "w", false, "dump inbound request headers and body")
 	flag.BoolVar(&dump, "dump", false, "dump inbound request/response traffic")
@@ -76,6 +77,16 @@ func main() {
 
 	logger := log.Default()
 
+	colorMode, colorOK := relay.ParseColorMode(*colorRaw)
+	if !colorOK {
+		logger.Printf("invalid color mode=%q, fallback to auto", *colorRaw)
+	}
+	palette := relay.NewPalette(colorMode, os.Stderr)
+	if palette.Enabled() {
+		// Colored output renders its own dim timestamps; drop the logger's prefix.
+		logger.SetFlags(0)
+	}
+
 	if *timeout < 0 {
 		logger.Fatalf("timeout must be >= 0 (0 means no timeout)")
 	}
@@ -116,6 +127,7 @@ func main() {
 		DumpRequest: dump,
 		DumpScope:   wireScope,
 		MaskAuth:    *maskAuth,
+		Palette:     palette,
 	})
 
 	server := &http.Server{
@@ -124,7 +136,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logStartup(logger, addr, mode, proxySummary, dump, wireScope, *maskAuth, *timeout, headerRules)
+	logStartup(logger, palette, addr, mode, proxySummary, dump, wireScope, *maskAuth, *timeout, headerRules)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server stopped: %v", err)
 	}
@@ -143,22 +155,53 @@ func (f *repeatedStringFlag) String() string {
 	return strings.Join(f.values, ", ")
 }
 
-func logStartup(logger *log.Logger, addr string, mode relay.TargetMode, proxySummary string, dump bool, dumpScope relay.DumpScope, maskAuth bool, timeout time.Duration, headerRules []relay.HeaderRule) {
-	logger.Printf("http-relay %s", version)
-	logger.Printf("listen: %s", addr)
-	logger.Printf("mode: %s", mode.String())
-	logger.Printf("upstream proxy: %s", proxySummary)
-	logger.Printf("timeout: %s", timeout)
-	logger.Printf("dump: enabled=%t scope=%s mask_auth=%t", dump, dumpScope.String(), maskAuth)
-	if len(headerRules) == 0 {
-		logger.Printf("request header rules: none")
+func logStartup(logger *log.Logger, palette relay.Palette, addr string, mode relay.TargetMode, proxySummary string, dump bool, dumpScope relay.DumpScope, maskAuth bool, timeout time.Duration, headerRules []relay.HeaderRule) {
+	if !palette.Enabled() {
+		logger.Printf("http-relay %s", version)
+		logger.Printf("listen: %s", addr)
+		logger.Printf("mode: %s", mode.String())
+		logger.Printf("upstream proxy: %s", proxySummary)
+		logger.Printf("timeout: %s", timeout)
+		logger.Printf("dump: enabled=%t scope=%s mask_auth=%t", dump, dumpScope.String(), maskAuth)
+		if len(headerRules) == 0 {
+			logger.Printf("request header rules: none")
+			return
+		}
+		logger.Printf("request header rules:")
+		for _, rule := range headerRules {
+			logger.Printf("  %s", rule.Summary())
+		}
 		return
 	}
 
-	logger.Printf("request header rules:")
-	for _, rule := range headerRules {
-		logger.Printf("  %s", rule.Summary())
+	timeoutStr := timeout.String()
+	if timeout == 0 {
+		timeoutStr = "none"
 	}
+	dumpStr := "disabled"
+	if dump {
+		dumpStr = fmt.Sprintf("enabled scope=%s mask_auth=%t", dumpScope.String(), maskAuth)
+	}
+
+	field := func(label, value string) string {
+		return palette.Dim("│  ") + palette.Dim(fmt.Sprintf("%-8s", label)) + value
+	}
+
+	logger.Printf("%s %s", palette.Dim("┌─"), palette.Bold("http-relay "+version))
+	logger.Print(field("listen", palette.URL(addr)))
+	logger.Print(field("mode", mode.String()))
+	logger.Print(field("proxy", proxySummary))
+	logger.Print(field("timeout", timeoutStr))
+	logger.Print(field("dump", dumpStr))
+	if len(headerRules) == 0 {
+		logger.Printf("%s %s", palette.Dim("└─"), palette.Dim("ready"))
+		return
+	}
+	logger.Print(field("headers", ""))
+	for _, rule := range headerRules {
+		logger.Print(palette.Dim("│    ") + rule.Summary())
+	}
+	logger.Printf("%s %s", palette.Dim("└─"), palette.Dim("ready"))
 }
 
 func envOrDefault(key, defaultValue string) string {

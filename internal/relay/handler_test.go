@@ -18,9 +18,11 @@ func TestParseTargetURL(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
+		want    string
 		wantErr bool
 	}{
-		{name: "valid", path: "/https://example.com/a?x=1", wantErr: false},
+		{name: "valid", path: "/https://example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
+		{name: "flattened scheme slash", path: "/https:/api.smith.langchain.com/info", want: "https://api.smith.langchain.com/info", wantErr: false},
 		{name: "missing scheme", path: "/example.com", wantErr: true},
 		{name: "invalid", path: "/https://%", wantErr: true},
 		{name: "unsupported scheme", path: "/ftp://example.com", wantErr: true},
@@ -43,7 +45,7 @@ func TestParseTargetURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got.String() != "https://example.com/a?x=1" {
+			if got.String() != tt.want {
 				t.Fatalf("target=%q", got.String())
 			}
 		})
@@ -73,9 +75,13 @@ func TestRemoveHopByHopHeaders(t *testing.T) {
 func TestRelayForwardAndResponse(t *testing.T) {
 	t.Parallel()
 
+	var upstreamHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method=%s", r.Method)
+		}
+		if r.Host != upstreamHost {
+			t.Fatalf("Host=%q want=%q", r.Host, upstreamHost)
 		}
 		body, _ := io.ReadAll(r.Body)
 		if string(body) != "hello" {
@@ -89,6 +95,11 @@ func TestRelayForwardAndResponse(t *testing.T) {
 		_, _ = w.Write([]byte("world"))
 	}))
 	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	upstreamHost = upstreamURL.Host
 
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
 	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp, false)

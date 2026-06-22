@@ -377,7 +377,7 @@ func parseTargetURL(r *http.Request) (*url.URL, error) {
 		return nil, errors.New("missing target URL in path")
 	}
 
-	target, err := url.Parse(raw)
+	target, err := url.Parse(normalizeTargetURL(raw))
 	if err != nil {
 		return nil, errors.New("invalid target URL")
 	}
@@ -393,6 +393,17 @@ func parseTargetURL(r *http.Request) (*url.URL, error) {
 	return target, nil
 }
 
+func normalizeTargetURL(raw string) string {
+	lower := strings.ToLower(raw)
+	for _, scheme := range []string{"http", "https"} {
+		prefix := scheme + ":/"
+		if strings.HasPrefix(lower, prefix) && !strings.HasPrefix(lower, prefix+"/") {
+			return raw[:len(scheme)+1] + "//" + raw[len(prefix):]
+		}
+	}
+	return raw
+}
+
 func (h *Handler) buildUpstreamRequest(r *http.Request, targetURL *url.URL) (*http.Request, error) {
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
@@ -400,6 +411,7 @@ func (h *Handler) buildUpstreamRequest(r *http.Request, targetURL *url.URL) (*ht
 	}
 
 	upstreamReq.Header = cloneHeader(r.Header)
+	upstreamReq.Host = targetURL.Host
 	removeHopByHopHeaders(upstreamReq.Header)
 	ApplyHeaderRules(upstreamReq, h.headerRules)
 	upstreamReq.ContentLength = r.ContentLength

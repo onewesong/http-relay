@@ -13,6 +13,7 @@ import (
 
 	"github.com/onewesong/http-relay/internal/relay"
 	"github.com/onewesong/http-relay/internal/tui"
+	"github.com/onewesong/http-relay/internal/web"
 )
 
 var version = "dev"
@@ -37,6 +38,8 @@ func main() {
 	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
 	colorRaw := flag.String("color", "auto", "colorize output: auto, always, never")
 	tuiFlag := flag.Bool("tui", false, "interactive collapsible TUI (implies dump of req+resp)")
+	webFlag := flag.Bool("web", false, "serve a live web UI on --web-listen (implies dump of req+resp)")
+	webListen := flag.String("web-listen", "127.0.0.1:8090", "listen address for the web UI")
 
 	flag.BoolVar(&dump, "w", false, "dump inbound request headers and body")
 	flag.BoolVar(&dump, "dump", false, "dump inbound request/response traffic")
@@ -57,7 +60,8 @@ func main() {
 
 		fmt.Fprintf(out, "Examples:\n")
 		fmt.Fprintf(out, "  %s --mode reverse:https://api.example.com --modify-header 'User-Agent: http-relay'\n", name)
-		fmt.Fprintf(out, "  %s --add-header 'X-Debug: 1' -w\n\n", name)
+		fmt.Fprintf(out, "  %s --add-header 'X-Debug: 1' -w\n", name)
+		fmt.Fprintf(out, "  %s --web --web-listen 127.0.0.1:8090\n\n", name)
 
 		fmt.Fprintf(out, "Flags:\n")
 		flag.PrintDefaults()
@@ -124,6 +128,10 @@ func main() {
 		Timeout:   *timeout,
 	}
 
+	if *tuiFlag && *webFlag {
+		logger.Fatalf("--tui and --web are mutually exclusive")
+	}
+
 	if *tuiFlag {
 		if !isTerminal(os.Stdout) {
 			logger.Fatalf("--tui requires an interactive terminal on stdout")
@@ -132,6 +140,21 @@ func main() {
 		dump = true
 		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
 		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules)
+		return
+	}
+
+	if *webFlag {
+		// The web viewer always captures full req+resp traffic, like the TUI.
+		dump = true
+		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
+		meta := web.Meta{
+			Addr:    addr,
+			Mode:    mode.String(),
+			Proxy:   proxySummary,
+			Timeout: timeoutLabel(*timeout),
+			Version: version,
+		}
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, meta, logger, palette)
 		return
 	}
 
@@ -204,6 +227,41 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 	}
 }
 
+// runWeb starts the relay proxy server and the web-UI server side by side, each
+// on its own listener (the proxy port treats any path as a target URL, so the
+// UI cannot share it). It returns when either server stops.
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, meta web.Meta, logger *log.Logger, palette relay.Palette) {
+	webHandler, reporter := web.New(meta)
+
+	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
+		TargetMode:  mode,
+		HeaderRules: headerRules,
+		DumpRequest: true,
+		DumpScope:   wireScope,
+		MaskAuth:    maskAuth,
+		Reporter:    reporter,
+	})
+
+	proxyServer := &http.Server{Addr: addr, Handler: proxyHandler, ReadHeaderTimeout: 10 * time.Second}
+	webServer := &http.Server{Addr: webAddr, Handler: webHandler, ReadHeaderTimeout: 10 * time.Second}
+
+	logStartup(logger, palette, addr, mode, proxySummary, true, wireScope, maskAuth, timeout, headerRules)
+	webURL := "http://" + webAddr
+	if palette.Enabled() {
+		logger.Printf("%s %s", palette.Dim("web UI:"), palette.URL(webURL))
+	} else {
+		logger.Printf("web UI: %s", webURL)
+	}
+
+	errc := make(chan error, 2)
+	go func() { errc <- proxyServer.ListenAndServe() }()
+	go func() { errc <- webServer.ListenAndServe() }()
+
+	if err := <-errc; err != nil && err != http.ErrServerClosed {
+		logger.Fatalf("server stopped: %v", err)
+	}
+}
+
 func isTerminal(f *os.File) bool {
 	if f == nil {
 		return false
@@ -217,12 +275,16 @@ func isTerminal(f *os.File) bool {
 
 // tuiHeader renders the relay configuration into a one-line status string.
 func tuiHeader(addr string, mode relay.TargetMode, proxySummary string, timeout time.Duration) string {
-	timeoutStr := timeout.String()
-	if timeout == 0 {
-		timeoutStr = "none"
-	}
 	return fmt.Sprintf("%s · %s · proxy=%s · timeout=%s",
-		addr, mode.String(), proxySummary, timeoutStr)
+		addr, mode.String(), proxySummary, timeoutLabel(timeout))
+}
+
+// timeoutLabel renders an upstream timeout for display, with 0 shown as "none".
+func timeoutLabel(timeout time.Duration) string {
+	if timeout == 0 {
+		return "none"
+	}
+	return timeout.String()
 }
 
 type repeatedStringFlag struct {

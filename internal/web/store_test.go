@@ -1,0 +1,111 @@
+package web
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func decodeTxn(t *testing.T, data []byte) *Transaction {
+	t.Helper()
+	var ev event
+	if err := json.Unmarshal(data, &ev); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if ev.Type != "txn" || ev.Txn == nil {
+		t.Fatalf("expected txn event, got %q", ev.Type)
+	}
+	return ev.Txn
+}
+
+func TestStoreMergesBySeq(t *testing.T) {
+	s := newStore(Meta{})
+	s.mutate(1, func(tx *Transaction) { tx.HasReq = true; tx.Method = "POST" })
+	s.mutate(1, func(tx *Transaction) { tx.HasResp = true; tx.Status = 201 })
+
+	if len(s.order) != 1 {
+		t.Fatalf("want 1 merged txn, got %d", len(s.order))
+	}
+	got := s.byID[1]
+	if !got.HasReq || !got.HasResp || got.Method != "POST" || got.Status != 201 {
+		t.Fatalf("merge lost fields: %+v", got)
+	}
+}
+
+func TestStoreEvictsOldest(t *testing.T) {
+	s := newStore(Meta{})
+	s.maxTxns = 2
+	for seq := uint64(1); seq <= 3; seq++ {
+		s.mutate(seq, func(tx *Transaction) {})
+	}
+	if len(s.order) != 2 {
+		t.Fatalf("order should be capped at 2, got %d", len(s.order))
+	}
+	if _, ok := s.byID[1]; ok {
+		t.Fatal("oldest (seq 1) should have been evicted")
+	}
+	if _, ok := s.byID[3]; !ok {
+		t.Fatal("newest (seq 3) should be retained")
+	}
+}
+
+func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
+	s := newStore(Meta{Addr: "x"})
+	s.mutate(1, func(tx *Transaction) { tx.Method = "GET" })
+
+	ch, replay, meta, cancel := s.subscribe()
+	defer cancel()
+
+	if meta.Addr != "x" {
+		t.Fatalf("meta not propagated: %+v", meta)
+	}
+	if len(replay) != 1 {
+		t.Fatalf("want 1 replayed event, got %d", len(replay))
+	}
+	if tx := decodeTxn(t, replay[0]); tx.Seq != 1 || tx.Method != "GET" {
+		t.Fatalf("bad replay txn: %+v", tx)
+	}
+
+	// A live update reaches the subscriber.
+	s.mutate(2, func(tx *Transaction) { tx.Method = "DELETE" })
+	select {
+	case data := <-ch:
+		if tx := decodeTxn(t, data); tx.Seq != 2 || tx.Method != "DELETE" {
+			t.Fatalf("bad live txn: %+v", tx)
+		}
+	default:
+		t.Fatal("expected a live event on the channel")
+	}
+}
+
+func TestStoreDropsSlowSubscriber(t *testing.T) {
+	s := newStore(Meta{})
+	ch, _, _, cancel := s.subscribe()
+	defer cancel()
+
+	// Never drain: fill the buffer, then one more broadcast drops + closes us.
+	for i := 0; i <= subBuffer; i++ {
+		s.mutate(uint64(i+1), func(tx *Transaction) {})
+	}
+
+	// Drain the buffered messages; the channel must end up closed.
+	closed := false
+	for range subBuffer + 1 {
+		if _, ok := <-ch; !ok {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatal("slow subscriber channel should be closed after overflow")
+	}
+	if len(s.subs) != 0 {
+		t.Fatalf("dropped subscriber should be removed, %d remain", len(s.subs))
+	}
+}
+
+func TestStoreSynthIDAboveRealSeqs(t *testing.T) {
+	s := newStore(Meta{})
+	if id := s.synthID(); id <= synthBase {
+		t.Fatalf("synth id %d should exceed base %d", id, synthBase)
+	}
+}

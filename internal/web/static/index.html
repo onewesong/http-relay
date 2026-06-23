@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>http-relay</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <span class="brand">http-relay</span>
+    <span id="meta" class="meta">connecting…</span>
+    <span class="spacer"></span>
+    <span id="status" class="conn conn-off" title="event stream">offline</span>
+    <span id="count" class="count">0 reqs</span>
+  </header>
+
+  <main>
+    <section id="list" aria-label="requests"></section>
+    <section id="detail" aria-label="detail">
+      <div class="empty">Select a request to inspect it.</div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

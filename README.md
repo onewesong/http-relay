@@ -94,6 +94,8 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 - `--dump-scope`: dump scope, supports `req`, `resp`, `req,resp`
 - `--mask-auth`: mask auth-related request headers in request dump
 - `--tui`: interactive collapsible TUI; lists each request, arrow keys / `j`,`k` to select, `enter` to expand its headers and body, `q` to quit (implies dumping req+resp, requires a terminal)
+- `--web`: serve a live web UI that streams traffic to the browser over SSE; click a request to inspect its headers and body, with collapsible, syntax-highlighted JSON (implies dumping req+resp, served on a separate port)
+- `--web-listen`: listen address for the web UI (default: `127.0.0.1:8090`)
 - `--add-header`: add an upstream request header, repeatable
 - `--modify-header`: set/overwrite an upstream request header, repeatable
 

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onewesong/http-relay/internal/relay"
+	"github.com/onewesong/http-relay/internal/tui"
 )
 
 var version = "dev"
@@ -34,6 +36,7 @@ func main() {
 	dumpScopeRaw := flag.String("dump-scope", os.Getenv("WIRE_SCOPE"), "dump scope when dump is enabled: req, resp, req,resp")
 	maskAuth := flag.Bool("mask-auth", false, "mask authentication headers in request dump")
 	colorRaw := flag.String("color", "auto", "colorize output: auto, always, never")
+	tuiFlag := flag.Bool("tui", false, "interactive collapsible TUI (implies dump of req+resp)")
 
 	flag.BoolVar(&dump, "w", false, "dump inbound request headers and body")
 	flag.BoolVar(&dump, "dump", false, "dump inbound request/response traffic")
@@ -121,6 +124,17 @@ func main() {
 		Timeout:   *timeout,
 	}
 
+	if *tuiFlag {
+		if !isTerminal(os.Stdout) {
+			logger.Fatalf("--tui requires an interactive terminal on stdout")
+		}
+		// The TUI always captures full req+resp traffic and owns the screen.
+		dump = true
+		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
+		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules)
+		return
+	}
+
 	handler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
 		TargetMode:  mode,
 		HeaderRules: headerRules,
@@ -140,6 +154,75 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server stopped: %v", err)
 	}
+}
+
+// runTUI starts the relay server in the background and runs the interactive
+// TUI on the main goroutine (it owns the terminal). It returns when the user
+// quits the TUI.
+func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule) {
+	header := tuiHeader(addr, mode, proxySummary, timeout)
+	prog, reporter := tui.New(header)
+
+	handler := relay.NewHandlerWithOptions(client, log.Default(), relay.HandlerOptions{
+		TargetMode:  mode,
+		HeaderRules: headerRules,
+		DumpRequest: true,
+		DumpScope:   wireScope,
+		MaskAuth:    maskAuth,
+		Reporter:    reporter,
+	})
+
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Silence the standard logger so stray writes can't corrupt the screen;
+	// surface a fatal listen error after the TUI exits instead.
+	log.SetOutput(io.Discard)
+
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+			prog.Quit() // a dead listener shouldn't leave the user staring at an empty UI
+		}
+	}()
+
+	_, runErr := prog.Run()
+	_ = server.Close()
+	log.SetOutput(os.Stderr)
+
+	select {
+	case err := <-serveErr:
+		log.Fatalf("server stopped: %v", err)
+	default:
+	}
+	if runErr != nil {
+		log.Fatalf("tui stopped: %v", runErr)
+	}
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// tuiHeader renders the relay configuration into a one-line status string.
+func tuiHeader(addr string, mode relay.TargetMode, proxySummary string, timeout time.Duration) string {
+	timeoutStr := timeout.String()
+	if timeout == 0 {
+		timeoutStr = "none"
+	}
+	return fmt.Sprintf("%s · %s · proxy=%s · timeout=%s",
+		addr, mode.String(), proxySummary, timeoutStr)
 }
 
 type repeatedStringFlag struct {

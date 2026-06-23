@@ -93,6 +93,7 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 - `-w` / `--dump`: dump request/response traffic
 - `--dump-scope`: dump scope, supports `req`, `resp`, `req,resp`
 - `--mask-auth`: mask auth-related request headers in request dump
+- `--tui`: interactive collapsible TUI; lists each request, arrow keys / `j`,`k` to select, `enter` to expand its headers and body, `q` to quit (implies dumping req+resp, requires a terminal)
 - `--add-header`: add an upstream request header, repeatable
 - `--modify-header`: set/overwrite an upstream request header, repeatable
 

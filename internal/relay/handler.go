@@ -27,8 +27,7 @@ var hopByHopHeaders = map[string]struct{}{
 
 type Handler struct {
 	client      *http.Client
-	logger      *log.Logger
-	palette     Palette
+	reporter    Reporter
 	targetMode  TargetMode
 	headerRules []HeaderRule
 	dumpRequest bool
@@ -44,6 +43,9 @@ type HandlerOptions struct {
 	DumpScope   DumpScope
 	MaskAuth    bool
 	Palette     Palette
+	// Reporter overrides where captured traffic is rendered. When nil, a
+	// log-based reporter is built from the logger and Palette.
+	Reporter Reporter
 }
 
 type DumpScope uint8
@@ -118,10 +120,14 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 		opts.DumpScope = DumpScopeReq | DumpScopeResp
 	}
 
+	reporter := opts.Reporter
+	if reporter == nil {
+		reporter = newLogReporter(logger, opts.Palette)
+	}
+
 	return &Handler{
 		client:      client,
-		logger:      logger,
-		palette:     opts.Palette,
+		reporter:    reporter,
 		targetMode:  opts.TargetMode,
 		headerRules: append([]HeaderRule(nil), opts.HeaderRules...),
 		dumpRequest: opts.DumpRequest,
@@ -202,38 +208,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
 }
 
-// logAccess emits one access-log entry. With color enabled it renders a layered,
-// colorized line; otherwise it falls back to the machine-readable key=value form.
+// logAccess emits one access-log entry through the reporter.
 func (h *Handler) logAccess(seq uint64, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
-	p := h.palette
-	if !p.Enabled() {
-		h.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q",
-			method, target, status, dur.Milliseconds(), bytes, errMsg)
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(p.Timestamp(time.Now()))
-	b.WriteByte(' ')
-	if seq > 0 {
-		b.WriteString(p.Dim(fmt.Sprintf("#%d", seq)))
-		b.WriteByte(' ')
-	}
-	fmt.Fprintf(&b, "%s %s %s %s",
-		p.Method(fmt.Sprintf("%-6s", method)),
-		p.Status(status),
-		p.Duration(dur),
-		p.Dim(fmt.Sprintf("%8s", formatBytes(bytes))),
-	)
-	if target != "" {
-		b.WriteByte(' ')
-		b.WriteString(p.URL(target))
-	}
-	if errMsg != "" {
-		b.WriteString("  ")
-		b.WriteString(p.Error("✗ " + errMsg))
-	}
-	h.logger.Print(b.String())
+	h.reporter.Access(AccessRecord{
+		Seq:      seq,
+		Method:   method,
+		Target:   target,
+		Status:   status,
+		Duration: dur,
+		Bytes:    bytes,
+		Err:      errMsg,
+	})
 }
 
 func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
@@ -257,59 +242,8 @@ func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
-	if h.palette.Enabled() {
-		h.logger.Print(h.renderDump(true, seq, string(head), body,
-			fmt.Sprintf("remote=%s host=%s", r.RemoteAddr, r.Host)))
-		return nil
-	}
-
-	h.logger.Printf(
-		"---- REQUEST DUMP BEGIN id=%d remote=%s host=%s ----\n%s%s\n---- REQUEST DUMP END id=%d body_bytes=%d ----",
-		seq,
-		r.RemoteAddr,
-		r.Host,
-		string(head),
-		string(body),
-		seq,
-		len(body),
-	)
+	h.reporter.RequestDump(seq, string(head), body, r.RemoteAddr, r.Host)
 	return nil
-}
-
-// renderDump builds a colored, indented dump block for one request or response.
-func (h *Handler) renderDump(isRequest bool, seq uint64, head string, body []byte, meta string) string {
-	p := h.palette
-	arrow, label := p.RespArrow(), "response"
-	if isRequest {
-		arrow, label = p.ReqArrow(), "request"
-	}
-
-	var b strings.Builder
-	b.WriteString(p.Timestamp(time.Now()))
-	b.WriteByte(' ')
-	b.WriteString(p.Dim(fmt.Sprintf("#%d", seq)))
-	fmt.Fprintf(&b, " %s %s  %s", arrow, p.Bold(label), p.Dim(meta))
-
-	lines := strings.Split(strings.TrimRight(head, "\r\n"), "\n")
-	for i, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		if i == 0 {
-			b.WriteString("\n    " + p.Bold(line)) // request/status line
-			continue
-		}
-		b.WriteString("\n    " + p.Header(line))
-	}
-
-	if len(body) > 0 {
-		b.WriteString("\n    " + p.Dim(fmt.Sprintf("body=%s", formatBytes(int64(len(body))))))
-		for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
-			b.WriteString("\n    " + line)
-		}
-	}
-	return b.String()
 }
 
 func maskAuthHeaders(h http.Header) {
@@ -350,21 +284,7 @@ func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []by
 		return fmt.Errorf("dump response headers: %w", err)
 	}
 
-	if h.palette.Enabled() {
-		h.logger.Print(h.renderDump(false, seq, string(head), body,
-			fmt.Sprintf("status=%s", resp.Status)))
-		return nil
-	}
-
-	h.logger.Printf(
-		"---- RESPONSE DUMP BEGIN id=%d status=%s ----\n%s%s\n---- RESPONSE DUMP END id=%d body_bytes=%d ----",
-		seq,
-		resp.Status,
-		string(head),
-		string(body),
-		seq,
-		len(body),
-	)
+	h.reporter.ResponseDump(seq, string(head), body, resp.Status)
 	return nil
 }
 

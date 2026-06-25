@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onewesong/http-relay/internal/relay"
+	relayscript "github.com/onewesong/http-relay/internal/script"
 	"github.com/onewesong/http-relay/internal/tui"
 	"github.com/onewesong/http-relay/internal/web"
 )
@@ -40,6 +41,9 @@ func main() {
 	tuiFlag := flag.Bool("tui", false, "interactive collapsible TUI (implies dump of req+resp)")
 	webFlag := flag.Bool("web", false, "serve a live web UI on --web-listen (implies dump of req+resp)")
 	webListen := flag.String("web-listen", "127.0.0.1:8090", "listen address for the web UI")
+	scriptPath := flag.String("script", "", "path to a JS file with onRequest/onResponse hooks that rewrite traffic")
+	scriptTimeout := flag.Duration("script-timeout", relayscript.DefaultTimeout, "per-hook execution timeout")
+	scriptReload := flag.String("script-reload", "watch", "hot-reload mode: watch, poll, or off")
 
 	flag.BoolVar(&dump, "w", false, "dump inbound request headers and body")
 	flag.BoolVar(&dump, "dump", false, "dump inbound request/response traffic")
@@ -108,6 +112,44 @@ func main() {
 		logger.Fatalf("invalid header rule: %v", err)
 	}
 
+	reloadMode, err := relayscript.ParseReloadMode(*scriptReload)
+	if err != nil {
+		logger.Fatalf("invalid --script-reload: %v", err)
+	}
+
+	// console.log output goes to stderr, except under the TUI which owns the
+	// screen—there it is discarded to avoid corrupting the display.
+	var scriptConsole io.Writer = os.Stderr
+	if *tuiFlag {
+		scriptConsole = io.Discard
+	}
+
+	// A script that fails to compile at startup is fatal—better to fail fast
+	// than to silently relay without the rewrites the operator asked for.
+	engine, err := relayscript.New(relayscript.Options{Path: *scriptPath, Timeout: *scriptTimeout, Console: scriptConsole})
+	if err != nil {
+		logger.Fatalf("failed to load script %q: %v", *scriptPath, err)
+	}
+	if engine != nil {
+		stop, werr := engine.Watch(reloadMode, 0, func(rerr error) {
+			if rerr != nil {
+				logger.Printf("script reload failed (keeping previous version): %v", rerr)
+				return
+			}
+			logger.Printf("script reloaded: %s", *scriptPath)
+		})
+		if werr != nil {
+			logger.Fatalf("failed to watch script %q: %v", *scriptPath, werr)
+		}
+		defer stop()
+	}
+
+	scriptSummary := "disabled"
+	if engine != nil {
+		scriptSummary = fmt.Sprintf("%s (req=%t resp=%t reload=%s timeout=%s)",
+			*scriptPath, engine.HasRequestHook(), engine.HasResponseHook(), reloadMode, *scriptTimeout)
+	}
+
 	addr := strings.TrimSpace(*listen)
 	if addr == "" {
 		addr = strings.TrimSpace(*host) + ":" + strings.TrimSpace(*port)
@@ -139,7 +181,7 @@ func main() {
 		// The TUI always captures full req+resp traffic and owns the screen.
 		dump = true
 		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
-		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules)
+		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine)
 		return
 	}
 
@@ -154,17 +196,18 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, meta, logger, palette)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, logger, palette)
 		return
 	}
 
 	handler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:  mode,
-		HeaderRules: headerRules,
-		DumpRequest: dump,
-		DumpScope:   wireScope,
-		MaskAuth:    *maskAuth,
-		Palette:     palette,
+		TargetMode:   mode,
+		HeaderRules:  headerRules,
+		DumpRequest:  dump,
+		DumpScope:    wireScope,
+		MaskAuth:     *maskAuth,
+		Palette:      palette,
+		ScriptEngine: engine,
 	})
 
 	server := &http.Server{
@@ -173,7 +216,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logStartup(logger, palette, addr, mode, proxySummary, dump, wireScope, *maskAuth, *timeout, headerRules)
+	logStartup(logger, palette, addr, mode, proxySummary, dump, wireScope, *maskAuth, *timeout, headerRules, scriptSummary)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server stopped: %v", err)
 	}
@@ -182,17 +225,18 @@ func main() {
 // runTUI starts the relay server in the background and runs the interactive
 // TUI on the main goroutine (it owns the terminal). It returns when the user
 // quits the TUI.
-func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule) {
+func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine) {
 	header := tuiHeader(addr, mode, proxySummary, timeout)
 	prog, reporter := tui.New(header)
 
 	handler := relay.NewHandlerWithOptions(client, log.Default(), relay.HandlerOptions{
-		TargetMode:  mode,
-		HeaderRules: headerRules,
-		DumpRequest: true,
-		DumpScope:   wireScope,
-		MaskAuth:    maskAuth,
-		Reporter:    reporter,
+		TargetMode:   mode,
+		HeaderRules:  headerRules,
+		DumpRequest:  true,
+		DumpScope:    wireScope,
+		MaskAuth:     maskAuth,
+		Reporter:     reporter,
+		ScriptEngine: engine,
 	})
 
 	server := &http.Server{
@@ -230,22 +274,23 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, meta web.Meta, logger *log.Logger, palette relay.Palette) {
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, logger *log.Logger, palette relay.Palette) {
 	webHandler, reporter := web.New(meta)
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:  mode,
-		HeaderRules: headerRules,
-		DumpRequest: true,
-		DumpScope:   wireScope,
-		MaskAuth:    maskAuth,
-		Reporter:    reporter,
+		TargetMode:   mode,
+		HeaderRules:  headerRules,
+		DumpRequest:  true,
+		DumpScope:    wireScope,
+		MaskAuth:     maskAuth,
+		Reporter:     reporter,
+		ScriptEngine: engine,
 	})
 
 	proxyServer := &http.Server{Addr: addr, Handler: proxyHandler, ReadHeaderTimeout: 10 * time.Second}
 	webServer := &http.Server{Addr: webAddr, Handler: webHandler, ReadHeaderTimeout: 10 * time.Second}
 
-	logStartup(logger, palette, addr, mode, proxySummary, true, wireScope, maskAuth, timeout, headerRules)
+	logStartup(logger, palette, addr, mode, proxySummary, true, wireScope, maskAuth, timeout, headerRules, scriptSummary)
 	webURL := "http://" + webAddr
 	if palette.Enabled() {
 		logger.Printf("%s %s", palette.Dim("web UI:"), palette.URL(webURL))
@@ -300,7 +345,7 @@ func (f *repeatedStringFlag) String() string {
 	return strings.Join(f.values, ", ")
 }
 
-func logStartup(logger *log.Logger, palette relay.Palette, addr string, mode relay.TargetMode, proxySummary string, dump bool, dumpScope relay.DumpScope, maskAuth bool, timeout time.Duration, headerRules []relay.HeaderRule) {
+func logStartup(logger *log.Logger, palette relay.Palette, addr string, mode relay.TargetMode, proxySummary string, dump bool, dumpScope relay.DumpScope, maskAuth bool, timeout time.Duration, headerRules []relay.HeaderRule, scriptSummary string) {
 	if !palette.Enabled() {
 		logger.Printf("http-relay %s", version)
 		logger.Printf("listen: %s", addr)
@@ -308,6 +353,7 @@ func logStartup(logger *log.Logger, palette relay.Palette, addr string, mode rel
 		logger.Printf("upstream proxy: %s", proxySummary)
 		logger.Printf("timeout: %s", timeout)
 		logger.Printf("dump: enabled=%t scope=%s mask_auth=%t", dump, dumpScope.String(), maskAuth)
+		logger.Printf("script: %s", scriptSummary)
 		if len(headerRules) == 0 {
 			logger.Printf("request header rules: none")
 			return
@@ -338,6 +384,7 @@ func logStartup(logger *log.Logger, palette relay.Palette, addr string, mode rel
 	logger.Print(field("proxy", proxySummary))
 	logger.Print(field("timeout", timeoutStr))
 	logger.Print(field("dump", dumpStr))
+	logger.Print(field("script", scriptSummary))
 	if len(headerRules) == 0 {
 		logger.Printf("%s %s", palette.Dim("└─"), palette.Dim("ready"))
 		return

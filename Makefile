@@ -3,8 +3,9 @@ CMD := ./cmd/http-relay
 BIN_DIR := bin
 BIN := $(BIN_DIR)/$(APP)
 VERSION ?= dev
+EXAMPLE_SCRIPT := examples/relay.example.js
 
-.PHONY: help fmt vet test build run clean docker-build
+.PHONY: help fmt vet test build run run-example clean docker-build
 
 help:
 	@echo "Available targets:"
@@ -13,6 +14,7 @@ help:
 	@echo "  make test          Run tests"
 	@echo "  make build         Build $(APP) into $(BIN)"
 	@echo "  make run           Run $(APP) locally"
+	@echo "  make run-example   Run $(APP) with the example rewrite script (hot-reload)"
 	@echo "  make clean         Remove build output"
 	@echo "  make docker-build  Build Docker image"
 
@@ -31,6 +33,9 @@ build:
 
 run:
 	go run $(CMD)
+
+run-example:
+	go run $(CMD) -w --script $(EXAMPLE_SCRIPT) --script-reload watch
 
 clean:
 	rm -rf $(BIN_DIR)

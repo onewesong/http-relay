@@ -98,6 +98,9 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 - `--web-listen`: listen address for the web UI (default: `127.0.0.1:8090`)
 - `--add-header`: add an upstream request header, repeatable
 - `--modify-header`: set/overwrite an upstream request header, repeatable
+- `--script`: path to a JavaScript file with `onRequest` / `onResponse` hooks that rewrite traffic
+- `--script-timeout`: per-hook execution timeout (default: `200ms`)
+- `--script-reload`: hot-reload mode, supports `watch` (default), `poll`, `off`
 
 Example:
 
@@ -166,6 +169,72 @@ http-relay \
   --add-header "X-Trace-Source: local" \
   --modify-header "User-Agent: http-relay"
 ```
+
+## Script Rewrite (JavaScript)
+
+For logic beyond static header rules, point `--script` at a JavaScript file that
+exports one or both hook functions. They run inside an embedded ECMAScript
+engine ([goja](https://github.com/dop251/goja)) — no external runtime needed.
+
+```bash
+http-relay --script ./examples/relay.example.js
+```
+
+```js
+// Rewrite the request sent upstream; return an object to short-circuit
+// (skip upstream and reply directly).
+function onRequest(req) {
+  req.headers["X-Trace-Id"] = "trace-" + Date.now();
+  delete req.headers["Cookie"];
+
+  // Reroute to a new API version.
+  if (req.url.indexOf("/api/v1/") >= 0) {
+    req.url = req.url.replace("/api/v1/", "/api/v2/");
+  }
+
+  // Local mock — never hits upstream.
+  if (req.url.indexOf("/healthz") >= 0) {
+    return { status: 200, headers: { "Content-Type": "application/json" }, body: '{"ok":true}' };
+  }
+}
+
+// Rewrite the response returned to the client.
+function onResponse(resp, req) {
+  resp.headers["X-Proxied-By"] = "http-relay";
+  if (resp.status === 500) {
+    resp.status = 503;
+    resp.body = "service temporarily unavailable\n";
+  }
+}
+```
+
+Hook object model (mutate in place to take effect):
+
+- `req.method` / `req.url` / `req.host` — strings. Rewriting `req.url` reroutes the
+  request; the script has the final say on the target (it overrides `--mode`).
+- `req.headers` / `resp.headers` — plain objects keyed by canonical header name:
+  - `h["X-Foo"] = "v"` — add or overwrite
+  - `delete h["X-Foo"]` — remove the header
+  - `h["X-Foo"] = ""` — keep the header with an empty value
+- `req.body` / `resp.body` — strings. `Content-Length` is recomputed automatically.
+- `resp.status` — number.
+- `onRequest` may `return { status, headers, body }` to short-circuit. `onResponse`
+  still runs on the synthesized response, so it can post-process mocks too.
+- `console.log` / `info` / `warn` / `error` / `debug` write to stderr (silenced under `--tui`).
+
+Behavior notes:
+
+- Both hooks are optional; an absent hook is skipped.
+- A hook that throws or exceeds `--script-timeout` returns `500` and does **not**
+  reach upstream.
+- A script that fails to compile at startup is fatal (the process exits).
+- `--script-reload` controls hot-reload: `watch` reloads on file changes (including
+  editor atomic saves), `poll` checks the modification time periodically, `off`
+  loads once at startup. A reload that fails to compile keeps the previous version
+  serving traffic.
+- Scripting works in all modes, including `--tui` and `--web`.
+
+See [examples/relay.example.js](examples/relay.example.js) for a fuller example.
 
 ## Upstream Proxy
 

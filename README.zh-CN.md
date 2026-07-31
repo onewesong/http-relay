@@ -109,6 +109,27 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 - `HOST`：监听地址（默认 `127.0.0.1`）
 - `PORT`：监听端口（默认 `8080`）
 - `WIRE_SCOPE`：`--dump-scope` 的兼容环境变量
+- `WEB_AUTH_KEY`：Web 界面登录密钥；仅在使用 `--web` 时生效。未设置或为空时不启用认证；设置后页面、SSE 和交易 API 需要登录，会话有效期为 24 小时。
+
+Web 认证的 Docker Compose 示例：
+
+```yaml
+services:
+  http-relay:
+    image: ghcr.io/onewesong/http-relay:latest
+    command: ["--listen", "0.0.0.0:8080", "--web", "--web-listen", "0.0.0.0:8090"]
+    environment:
+      WEB_AUTH_KEY: "replace-with-a-long-random-secret"
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8090:8090"
+```
+
+通过 Nginx 使用 HTTPS 反向代理时，请传递 `X-Forwarded-Proto`，以便会话 Cookie 带上 `Secure` 属性：
+
+```nginx
+proxy_set_header X-Forwarded-Proto $scheme;
+```
 
 ## 抓包输出
 

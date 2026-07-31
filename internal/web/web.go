@@ -16,7 +16,13 @@ var staticFS embed.FS
 // New builds the web UI handler and the relay.Reporter that feeds it. The
 // reporter is safe to call from request-handling goroutines; mount the handler
 // on a listener separate from the relay's proxy port.
-func New(meta Meta) (http.Handler, relay.Reporter) {
+func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	auth := newAuthenticator(opts)
+	meta.AuthEnabled = auth.enabled()
 	s := newStore(meta)
 
 	static, err := fs.Sub(staticFS, "static")
@@ -25,9 +31,12 @@ func New(meta Meta) (http.Handler, relay.Reporter) {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServerFS(static))
-	mux.HandleFunc("GET /events", s.handleEvents)
-	mux.HandleFunc("GET /api/transactions", s.handleTransactions)
+	mux.HandleFunc("GET /login", auth.handleLogin)
+	mux.HandleFunc("POST /login", auth.handleLogin)
+	mux.HandleFunc("POST /logout", auth.handleLogout)
+	mux.Handle("GET /", auth.protect(http.FileServerFS(static)))
+	mux.Handle("GET /events", auth.protect(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /api/transactions", auth.protect(http.HandlerFunc(s.handleTransactions)))
 
 	return mux, &webReporter{store: s}
 }

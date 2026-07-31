@@ -196,7 +196,7 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, logger, palette)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, os.Getenv("WEB_AUTH_KEY"), logger, palette)
 		return
 	}
 
@@ -274,8 +274,8 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, logger *log.Logger, palette relay.Palette) {
-	webHandler, reporter := web.New(meta)
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, webAuthKey string, logger *log.Logger, palette relay.Palette) {
+	webHandler, reporter := web.New(meta, web.Options{AuthKey: webAuthKey})
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
 		TargetMode:   mode,

@@ -9,12 +9,21 @@ const detailEl = document.getElementById('detail');
 const metaEl = document.getElementById('meta');
 const countEl = document.getElementById('count');
 const statusEl = document.getElementById('status');
+const logoutEl = document.getElementById('logout');
 
 // ---- SSE ----
 function connect() {
   const es = new EventSource('events');
   es.onopen = () => setConn(true);
-  es.onerror = () => setConn(false); // browser auto-reconnects
+  es.onerror = () => {
+    setConn(false);
+    // A rejected SSE request (such as an expired session) permanently closes
+    // EventSource; send the user back through the login flow in that case.
+    if (es.readyState === EventSource.CLOSED) {
+      const next = window.location.pathname + window.location.search + window.location.hash;
+      window.location.assign('/login?next=' + encodeURIComponent(next));
+    }
+  };
   es.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
@@ -33,6 +42,7 @@ function applyMeta(meta) {
   const bits = [meta.addr, meta.mode, 'proxy=' + meta.proxy, 'timeout=' + meta.timeout];
   metaEl.textContent = bits.filter(Boolean).join('  ·  ');
   if (meta.version) document.title = `http-relay ${meta.version}`;
+  logoutEl.hidden = !meta.authEnabled;
 }
 
 function applyTxn(t) {

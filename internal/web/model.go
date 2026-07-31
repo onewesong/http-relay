@@ -16,11 +16,12 @@ const maxBodyBytes = 256 * 1024
 
 // Meta is the relay configuration shown in the page header.
 type Meta struct {
-	Addr    string `json:"addr"`
-	Mode    string `json:"mode"`
-	Proxy   string `json:"proxy"`
-	Timeout string `json:"timeout"`
-	Version string `json:"version"`
+	Addr        string `json:"addr"`
+	Mode        string `json:"mode"`
+	Proxy       string `json:"proxy"`
+	Timeout     string `json:"timeout"`
+	Version     string `json:"version"`
+	AuthEnabled bool   `json:"authEnabled"`
 }
 
 // Body is a body captured for display. Text is set for valid UTF-8 payloads;

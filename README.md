@@ -114,6 +114,27 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 - `HOST`: listen host (default: `127.0.0.1`)
 - `PORT`: listen port (default: `8080`)
 - `WIRE_SCOPE`: compatibility fallback for `--dump-scope`
+- `WEB_AUTH_KEY`: login key for the Web UI, effective only with `--web`. Empty or unset keeps the UI public; when set, the page, SSE, and transaction API require login and sessions last 24 hours.
+
+Docker Compose example with Web authentication:
+
+```yaml
+services:
+  http-relay:
+    image: ghcr.io/onewesong/http-relay:latest
+    command: ["--listen", "0.0.0.0:8080", "--web", "--web-listen", "0.0.0.0:8090"]
+    environment:
+      WEB_AUTH_KEY: "replace-with-a-long-random-secret"
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8090:8090"
+```
+
+When HTTPS is terminated by Nginx, forward `X-Forwarded-Proto` so the session cookie gets the `Secure` attribute:
+
+```nginx
+proxy_set_header X-Forwarded-Proto $scheme;
+```
 
 ## Traffic Dump
 

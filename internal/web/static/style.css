@@ -49,6 +49,8 @@ html, body {
 .conn { padding: 1px 8px; border-radius: 10px; font-size: 11px; }
 .conn-on { background: #14361f; color: var(--ok); }
 .conn-off { background: #3a1d1d; color: var(--server-err); }
+#logout button { border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; color: var(--fg); background: var(--bg); font: inherit; cursor: pointer; }
+#logout button:hover { background: var(--bg-sel); }
 
 main {
   display: grid;

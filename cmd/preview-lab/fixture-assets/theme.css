@@ -1,0 +1,4 @@
+body { margin: 2rem; color: #24344d; background: #eef5ff; font: 16px/1.5 system-ui, sans-serif; }
+img { width: 72px; height: 72px; float: right; }
+h1 { color: #0969da; }
+input, button { padding: .5rem; }

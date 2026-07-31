@@ -92,7 +92,7 @@ curl -i "http://127.0.0.1:8080/v1/users"
 - `--dump-scope`：转储范围，支持 `req`、`resp`、`req,resp`
 - `--mask-auth`：请求转储时脱敏认证相关请求头
 - `--tui`：交互式可折叠界面；逐条列出请求，方向键 / `j`、`k` 选择，`enter` 展开该请求的头部与正文，`q` 退出（隐式开启 req+resp 转储，需要在终端中运行）
-- `--web`：启动实时 Web 界面，通过 SSE 把流量推送到浏览器；点击请求查看其头部与正文，JSON 可折叠并语法高亮（隐式开启 req+resp 转储，监听在独立端口）
+- `--web`：启动实时 Web 界面，通过 SSE 把流量推送到浏览器；响应正文可在 Preview/Raw 间切换，Preview 支持可折叠 JSON、沙箱 HTML 和 SSE/OpenAI 消息合并（隐式开启 req+resp 转储，监听在独立端口）
 - `--web-listen`：Web 界面监听地址（默认 `127.0.0.1:8090`）
 - `--add-header`：给上游请求追加请求头，可重复
 - `--modify-header`：给上游请求设置/覆盖请求头，可重复
@@ -124,6 +124,16 @@ services:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8090:8090"
 ```
+
+### 响应预览实验台
+
+开发预览插件时，可以启动不连接代理流量的本地实验台：
+
+```bash
+go run ./cmd/preview-lab
+```
+
+默认访问地址为 `http://127.0.0.1:8091`。页面内置 JSON、HTML、SSE、OpenAI 流式响应、文本和二进制用例，可以编辑响应头与正文并即时切换 Preview/Raw。使用 `-listen` 修改监听地址；实验台只用于本地开发，不包含在正式 Web UI 中。
 
 通过 Nginx 使用 HTTPS 反向代理时，请传递 `X-Forwarded-Proto`，以便会话 Cookie 带上 `Secure` 属性：
 

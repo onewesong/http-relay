@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>http-relay preview lab</title>
+  <link rel="stylesheet" href="/shared-style.css">
+  <link rel="stylesheet" href="/lab.css">
+</head>
+<body>
+  <header class="lab-header">
+    <strong>http-relay preview lab</strong>
+    <select id="fixture" aria-label="Test case"></select>
+    <button id="reset" type="button">Reset fixture</button>
+    <span id="description"></span>
+  </header>
+  <main class="lab-main">
+    <form id="editor" class="lab-editor">
+      <label>Target URL<input id="target" type="url"></label>
+      <label>Status line<input id="status-line" type="text"></label>
+      <label>Response headers<textarea id="headers" spellcheck="false"></textarea></label>
+      <div class="lab-row">
+        <label>Body encoding<select id="encoding"><option value="text">text</option><option value="base64">base64</option></select></label>
+        <label class="lab-check"><input id="truncated" type="checkbox"> truncated</label>
+      </div>
+      <label class="body-editor">Response body<textarea id="body" spellcheck="false"></textarea></label>
+    </form>
+    <section class="lab-output">
+      <div id="preview"></div>
+    </section>
+  </main>
+  <script type="module" src="/lab.mjs"></script>
+</body>
+</html>

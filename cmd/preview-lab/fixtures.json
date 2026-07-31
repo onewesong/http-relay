@@ -1,0 +1,102 @@
+[
+  {
+    "name": "Nested JSON",
+    "description": "Nested objects, arrays and scalar syntax highlighting.",
+    "target": "https://api.example.test/v1/models",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: application/json; charset=utf-8\nCache-Control: no-cache",
+    "encoding": "text",
+    "body": "{\n  \"models\": [\n    {\"id\": \"gpt-demo\", \"enabled\": true, \"limits\": {\"rpm\": 120}},\n    {\"id\": \"embedding-demo\", \"enabled\": false, \"limits\": null}\n  ],\n  \"count\": 2\n}",
+    "truncated": false
+  },
+  {
+    "name": "Invalid JSON",
+    "description": "JSON Content-Type with malformed input exercises preview fallback.",
+    "target": "https://api.example.test/broken",
+    "statusLine": "HTTP/1.1 502 Bad Gateway",
+    "headers": "Content-Type: application/json",
+    "encoding": "text",
+    "body": "{\"ok\": false, \"missing\": ]",
+    "truncated": false
+  },
+  {
+    "name": "Sandboxed HTML",
+    "description": "Relative assets load while scripts, forms and navigation remain sandboxed.",
+    "target": "{{origin}}/fixture-assets/page/",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/html; charset=utf-8",
+    "encoding": "text",
+    "body": "<!doctype html><html><head><link rel=\"stylesheet\" href=\"../theme.css\"><title>Fixture</title></head><body><img src=\"../logo.svg\" alt=\"fixture logo\"><h1>Sandboxed HTML preview</h1><p id=\"script-status\">Scripts are blocked.</p><script>document.getElementById('script-status').textContent='UNSAFE: script executed';</script><form action=\"https://example.com\"><input value=\"form submission is blocked\"><button>Submit</button></form><a href=\"https://example.com\">Navigation is blocked</a></body></html>",
+    "truncated": false
+  },
+  {
+    "name": "OpenAI text SSE",
+    "description": "Chat Completions delta content is merged into one assistant message.",
+    "target": "https://api.example.test/v1/chat/completions",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/event-stream\nX-Accel-Buffering: no",
+    "encoding": "text",
+    "body": "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\", how can I help you today?\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":9,\"total_tokens\":17}}\n\ndata: [DONE]\n\n",
+    "truncated": false
+  },
+  {
+    "name": "OpenAI tools SSE",
+    "description": "Multiple choices and fragmented tool call arguments are merged by index.",
+    "target": "https://api.example.test/v1/chat/completions",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/event-stream",
+    "encoding": "text",
+    "body": "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\"}}]}},{\"index\":1,\"delta\":{\"role\":\"assistant\",\"content\":\"No tool needed\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Shanghai\\\"}\"}}]},\"finish_reason\":\"tool_calls\"},{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":42}}\n\ndata: [DONE]\n\n",
+    "truncated": false
+  },
+  {
+    "name": "Generic SSE",
+    "description": "Comments, ids, retry, custom events, multiline data and non-JSON frames.",
+    "target": "https://events.example.test/feed",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/event-stream",
+    "encoding": "text",
+    "body": ": heartbeat\nid: 7\nevent: status\nretry: 3000\ndata: first line\ndata: second line\n\nevent: payload\ndata: {\"ready\":true}\n\n",
+    "truncated": false
+  },
+  {
+    "name": "Truncated SSE",
+    "description": "An incomplete final frame remains inspectable and carries a truncation warning.",
+    "target": "https://events.example.test/feed",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/event-stream",
+    "encoding": "text",
+    "body": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\ndata: {not valid",
+    "truncated": true
+  },
+  {
+    "name": "Plain text",
+    "description": "No preview plugin matches, so Preview safely falls back to Raw.",
+    "target": "https://example.test/robots.txt",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: text/plain; charset=utf-8",
+    "encoding": "text",
+    "body": "User-agent: *\nDisallow: /private",
+    "truncated": false
+  },
+  {
+    "name": "Empty body",
+    "description": "An empty textual response remains valid and inspectable.",
+    "target": "https://api.example.test/no-content",
+    "statusLine": "HTTP/1.1 204 No Content",
+    "headers": "Content-Type: text/plain",
+    "encoding": "text",
+    "body": "",
+    "truncated": false
+  },
+  {
+    "name": "Binary body",
+    "description": "Binary payloads are represented as Base64 in Raw mode.",
+    "target": "https://cdn.example.test/pixel.bin",
+    "statusLine": "HTTP/1.1 200 OK",
+    "headers": "Content-Type: application/octet-stream",
+    "encoding": "base64",
+    "body": "iVBORw0KGgoAAAANSUhEUg==",
+    "truncated": false
+  }
+]

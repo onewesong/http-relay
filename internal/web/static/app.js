@@ -1,8 +1,12 @@
 'use strict';
 
+import { tryParseJSON } from './preview/core.mjs';
+import { createBodyViewer, renderJSON } from './preview/viewer.mjs';
+
 const txns = new Map();   // seq -> transaction
 const order = [];         // seqs in arrival order
 let selected = null;
+let responseViewMode = loadResponseViewMode();
 
 const listEl = document.getElementById('list');
 const detailEl = document.getElementById('detail');
@@ -110,8 +114,8 @@ function select(seq) {
 function renderDetail(t) {
   if (!t) return;
   const frag = document.createDocumentFragment();
-  frag.appendChild(section('request', '▶', t.reqHead, t.reqBody));
-  frag.appendChild(section('response', '◀', t.respHead, t.respBody));
+  frag.appendChild(section('request', '▶', t.reqHead, t.reqBody, t, false));
+  frag.appendChild(section('response', '◀', t.respHead, t.respBody, t, true));
   if (!t.reqHead && !t.respHead && !t.reqBody && !t.respBody) {
     const e = document.createElement('div');
     e.className = 'empty';
@@ -121,7 +125,7 @@ function renderDetail(t) {
   detailEl.replaceChildren(frag);
 }
 
-function section(label, arrow, head, body) {
+function section(label, arrow, head, body, transaction, isResponse) {
   const block = document.createElement('div');
   block.className = 'block';
   if (!head && !body) { block.hidden = true; return block; }
@@ -131,7 +135,7 @@ function section(label, arrow, head, body) {
   block.appendChild(h);
 
   if (head) block.appendChild(renderHead(head));
-  if (body) block.appendChild(renderBody(body));
+  if (body) block.appendChild(isResponse ? renderResponseBody(transaction, head, body) : renderRequestBody(body));
   return block;
 }
 
@@ -157,7 +161,7 @@ function renderHead(head) {
   return pre;
 }
 
-function renderBody(body) {
+function renderRequestBody(body) {
   const wrap = document.createElement('div');
   const meta = document.createElement('div');
   meta.className = 'bodymeta';
@@ -172,9 +176,9 @@ function renderBody(body) {
   }
 
   const text = body.text || '';
-  const parsed = tryJSON(text);
+  const parsed = tryParseJSON(text);
   if (parsed !== undefined) {
-    wrap.appendChild(jsonTree(parsed));
+    wrap.appendChild(renderJSON(parsed));
   } else {
     const pre = document.createElement('pre');
     pre.textContent = text;
@@ -183,103 +187,19 @@ function renderBody(body) {
   return wrap;
 }
 
-function tryJSON(text) {
-  const t = text.trim();
-  if (!t || (t[0] !== '{' && t[0] !== '[')) return undefined;
-  try { return JSON.parse(t); } catch { return undefined; }
+function renderResponseBody(transaction, head, body) {
+  return createBodyViewer({ transaction, target: transaction.target, head, body }, {
+    mode: responseViewMode,
+    onModeChange: (mode) => {
+      responseViewMode = mode;
+      try { sessionStorage.setItem('http-relay.response-view-mode', mode); } catch { /* storage may be disabled */ }
+    },
+  });
 }
 
-// ---- collapsible, highlighted JSON tree ----
-function jsonTree(value) {
-  const pre = document.createElement('pre');
-  pre.className = 'json';
-  pre.appendChild(buildMember([], value, false));
-  return pre;
-}
-
-// buildMember renders one value, optionally prefixed by label nodes (a key) and
-// followed by a comma. Containers become collapsible <details>; scalars a line.
-function buildMember(label, value, comma) {
-  const isArr = Array.isArray(value);
-  const isObj = value && typeof value === 'object';
-  if (isArr || isObj) return buildContainer(label, value, isArr, comma);
-
-  const line = document.createElement('div');
-  label.forEach((n) => line.appendChild(n));
-  line.appendChild(scalar(value));
-  if (comma) line.appendChild(punct(','));
-  return line;
-}
-
-function buildContainer(label, value, isArr, comma) {
-  const open = isArr ? '[' : '{';
-  const close = isArr ? ']' : '}';
-  const keys = isArr ? null : Object.keys(value);
-  const count = isArr ? value.length : keys.length;
-  const tail = close + (comma ? ',' : '');
-
-  if (count === 0) {
-    const line = document.createElement('div');
-    label.forEach((n) => line.appendChild(n));
-    line.appendChild(punct(open + tail));
-    return line;
-  }
-
-  const details = document.createElement('details');
-  details.className = 'node';
-  details.open = true;
-
-  const summary = document.createElement('summary');
-  summary.appendChild(twirl());
-  label.forEach((n) => summary.appendChild(n));
-  summary.appendChild(punct(open));
-  const hint = document.createElement('span');
-  hint.className = 'collapsed-hint';
-  const noun = isArr ? (count === 1 ? 'item' : 'items') : (count === 1 ? 'key' : 'keys');
-  hint.textContent = ` … ${tail} ${count} ${noun}`;
-  summary.appendChild(hint);
-  details.appendChild(summary);
-
-  const indent = document.createElement('div');
-  indent.className = 'indent';
-  if (isArr) {
-    value.forEach((item, i) => indent.appendChild(buildMember([], item, i < count - 1)));
-  } else {
-    keys.forEach((key, i) => indent.appendChild(buildMember(keyLabel(key), value[key], i < count - 1)));
-  }
-  details.appendChild(indent);
-  details.appendChild(punct(tail));
-  return details;
-}
-
-function keyLabel(key) {
-  const k = document.createElement('span');
-  k.className = 'jk';
-  k.textContent = JSON.stringify(key);
-  return [k, punct(': ')];
-}
-
-function scalar(value) {
-  const s = document.createElement('span');
-  if (value === null) { s.className = 'ju'; s.textContent = 'null'; }
-  else if (typeof value === 'string') { s.className = 'js'; s.textContent = JSON.stringify(value); }
-  else if (typeof value === 'number') { s.className = 'jn'; s.textContent = String(value); }
-  else if (typeof value === 'boolean') { s.className = 'jb'; s.textContent = String(value); }
-  else { s.textContent = String(value); }
-  return s;
-}
-
-function punct(text) {
-  const s = document.createElement('span');
-  s.className = 'jp';
-  s.textContent = text;
-  return s;
-}
-
-function twirl() {
-  const s = document.createElement('span');
-  s.className = 'tw';
-  return s;
+function loadResponseViewMode() {
+  try { return sessionStorage.getItem('http-relay.response-view-mode') === 'raw' ? 'raw' : 'preview'; }
+  catch { return 'preview'; }
 }
 
 // ---- helpers ----

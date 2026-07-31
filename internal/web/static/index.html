@@ -10,6 +10,10 @@
   <header id="topbar">
     <span class="brand">http-relay</span>
     <span id="meta" class="meta">connecting…</span>
+    <nav id="view-switch" class="view-switch" aria-label="Traffic view">
+      <button type="button" data-view="requests" class="active" aria-pressed="true">Requests</button>
+      <button type="button" data-view="conversations" aria-pressed="false">Conversations</button>
+    </nav>
     <span class="spacer"></span>
     <span id="status" class="conn conn-off" title="event stream">offline</span>
     <span id="count" class="count">0 reqs</span>

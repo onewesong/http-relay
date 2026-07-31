@@ -92,7 +92,7 @@ curl -i "http://127.0.0.1:8080/v1/users"
 - `--dump-scope`：转储范围，支持 `req`、`resp`、`req,resp`
 - `--mask-auth`：请求转储时脱敏认证相关请求头
 - `--tui`：交互式可折叠界面；逐条列出请求，方向键 / `j`、`k` 选择，`enter` 展开该请求的头部与正文，`q` 退出（隐式开启 req+resp 转储，需要在终端中运行）
-- `--web`：启动实时 Web 界面，通过 SSE 把流量推送到浏览器；响应正文可在 Preview/Raw 间切换，Preview 支持可折叠 JSON、沙箱 HTML 和 SSE/OpenAI 消息合并（隐式开启 req+resp 转储，监听在独立端口）
+- `--web`：启动实时 Web 界面，通过 SSE 把流量推送到浏览器；响应正文可在 Preview/Raw 间切换，Preview 支持可折叠 JSON、沙箱 HTML 和 SSE/OpenAI 消息合并；Conversations 视图可按显式会话 ID、`previous_response_id` 或完整消息历史关联 OpenAI 连续对话，并可跳回原始请求（隐式开启 req+resp 转储，监听在独立端口）
 - `--web-listen`：Web 界面监听地址（默认 `127.0.0.1:8090`）
 - `--add-header`：给上游请求追加请求头，可重复
 - `--modify-header`：给上游请求设置/覆盖请求头，可重复

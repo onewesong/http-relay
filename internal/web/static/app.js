@@ -2,10 +2,14 @@
 
 import { tryParseJSON } from './preview/core.mjs';
 import { createBodyViewer, renderJSON } from './preview/viewer.mjs';
+import { buildConversations } from './conversation.mjs';
 
 const txns = new Map();   // seq -> transaction
 const order = [];         // seqs in arrival order
 let selected = null;
+let selectedConversation = null;
+let conversations = [];
+let trafficView = 'requests';
 let responseViewMode = loadResponseViewMode();
 
 const listEl = document.getElementById('list');
@@ -14,6 +18,11 @@ const metaEl = document.getElementById('meta');
 const countEl = document.getElementById('count');
 const statusEl = document.getElementById('status');
 const logoutEl = document.getElementById('logout');
+const viewSwitchEl = document.getElementById('view-switch');
+
+viewSwitchEl.querySelectorAll('button').forEach((button) => {
+  button.onclick = () => setTrafficView(button.dataset.view);
+});
 
 // ---- SSE ----
 function connect() {
@@ -53,19 +62,28 @@ function applyTxn(t) {
   const isNew = !txns.has(t.seq);
   txns.set(t.seq, t);
   if (isNew) order.push(t.seq);
+  if (selected === null && isNew) selected = t.seq;
+  conversations = buildConversations(order.map((seq) => txns.get(seq)));
+  if (!conversations.some((conversation) => conversation.id === selectedConversation)) {
+    selectedConversation = conversations[0]?.id || null;
+  }
 
   const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 24;
   renderList();
   if (isNew && atBottom) listEl.scrollTop = listEl.scrollHeight;
 
-  if (selected === null && isNew) select(t.seq);
-  else if (t.seq === selected) renderDetail(t);
+  if (trafficView === 'requests') {
+    if (t.seq === selected) renderDetail(t);
+  } else {
+    renderSelectedConversation();
+  }
 
-  countEl.textContent = `${order.length} reqs`;
+  countEl.textContent = `${order.length} reqs${conversations.length ? ` · ${conversations.length} chats` : ''}`;
 }
 
 // ---- list ----
 function renderList() {
+  if (trafficView === 'conversations') return renderConversationList();
   const frag = document.createDocumentFragment();
   for (const seq of order) {
     frag.appendChild(rowFor(txns.get(seq)));
@@ -108,6 +126,170 @@ function select(seq) {
   selected = seq;
   renderList();
   renderDetail(txns.get(seq));
+}
+
+function setTrafficView(view) {
+  if (view !== 'requests' && view !== 'conversations') return;
+  trafficView = view;
+  viewSwitchEl.querySelectorAll('button').forEach((button) => {
+    const active = button.dataset.view === view;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  listEl.setAttribute('aria-label', view);
+  renderList();
+  if (view === 'requests') renderDetail(txns.get(selected));
+  else renderSelectedConversation();
+}
+
+// ---- conversation projection ----
+function renderConversationList() {
+  const frag = document.createDocumentFragment();
+  if (!conversations.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty conversation-empty';
+    empty.textContent = 'No OpenAI conversations recognized yet.';
+    frag.appendChild(empty);
+  }
+  for (const conversation of conversations) {
+    const row = document.createElement('div');
+    row.className = 'conversation-row' + (conversation.id === selectedConversation ? ' sel' : '');
+    row.onclick = () => selectConversation(conversation.id);
+    const title = document.createElement('div');
+    title.className = 'conversation-title';
+    title.textContent = conversation.title || conversation.id;
+    const meta = document.createElement('div');
+    meta.className = 'conversation-row-meta';
+    meta.textContent = [conversation.model, conversation.endpoint, `${conversation.transactionIds.length} reqs`, formatClock(conversation.updatedAt)].filter(Boolean).join(' · ');
+    row.append(title, meta);
+    frag.appendChild(row);
+  }
+  listEl.replaceChildren(frag);
+}
+
+function selectConversation(id) {
+  selectedConversation = id;
+  renderConversationList();
+  renderSelectedConversation();
+}
+
+function renderSelectedConversation() {
+  const conversation = conversations.find((candidate) => candidate.id === selectedConversation);
+  if (!conversation) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No conversation selected.';
+    detailEl.replaceChildren(empty);
+    return;
+  }
+  detailEl.replaceChildren(conversationView(conversation));
+}
+
+function conversationView(conversation) {
+  const root = document.createElement('div');
+  root.className = 'conversation-view';
+  const header = document.createElement('header');
+  header.className = 'conversation-header';
+  const title = document.createElement('h2');
+  title.textContent = conversation.title || conversation.id;
+  const meta = document.createElement('div');
+  meta.className = 'conversation-meta';
+  meta.textContent = [conversation.model, conversation.endpoint, conversation.externalId ? `id=${conversation.externalId}` : '', `${conversation.transactionIds.length} requests`, confidenceLabel(conversation.confidence)].filter(Boolean).join(' · ');
+  header.append(title, meta);
+  root.appendChild(header);
+
+  const strip = document.createElement('div');
+  strip.className = 'conversation-strip';
+  strip.title = 'Conversation event distribution';
+  for (const item of conversation.items) {
+    const segment = document.createElement('span');
+    segment.className = `strip-${item.type}`;
+    strip.appendChild(segment);
+  }
+  root.appendChild(strip);
+
+  if (conversation.truncated) {
+    const warning = document.createElement('div');
+    warning.className = 'preview-warning';
+    warning.textContent = 'One or more captured bodies are truncated; this conversation may be incomplete.';
+    root.appendChild(warning);
+  }
+
+  const timeline = document.createElement('div');
+  timeline.className = 'conversation-timeline';
+  conversation.items.forEach((item, index) => timeline.appendChild(conversationItem(item, index)));
+  root.appendChild(timeline);
+
+  if (conversation.usage) {
+    const usage = document.createElement('details');
+    usage.className = 'conversation-usage';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Latest usage';
+    usage.append(summary, renderJSON(conversation.usage));
+    root.appendChild(usage);
+  }
+  return root;
+}
+
+function conversationItem(item, index) {
+  const details = document.createElement('details');
+  details.className = `conversation-event event-${item.type}`;
+  details.open = item.type === 'user' || item.type === 'agent' || item.type === 'instruction' || item.content.length < 800;
+  const summary = document.createElement('summary');
+  const label = document.createElement('span');
+  label.className = 'event-label';
+  label.textContent = eventLabel(item);
+  const preview = document.createElement('span');
+  preview.className = 'event-preview';
+  preview.textContent = collapsedPreview(item);
+  const position = document.createElement('span');
+  position.className = 'event-position';
+  position.textContent = `#${index + 1}  ${formatClock(item.at)}`;
+  summary.append(label, preview, position);
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'event-body';
+  const parsed = (item.type === 'tool_call' || item.type === 'tool_result') ? tryParseJSON(item.content) : undefined;
+  if (parsed !== undefined) body.appendChild(renderJSON(parsed));
+  else {
+    const content = document.createElement('pre');
+    content.textContent = item.content || '(empty)';
+    body.appendChild(content);
+  }
+  const source = document.createElement('button');
+  source.type = 'button';
+  source.className = 'source-request';
+  source.textContent = `View request #${item.transactionId}`;
+  source.onclick = () => {
+    selected = item.transactionId;
+    setTrafficView('requests');
+  };
+  body.appendChild(source);
+  details.appendChild(body);
+  return details;
+}
+
+function eventLabel(item) {
+  if (item.type === 'agent') return 'Agent';
+  if (item.type === 'user') return 'User';
+  if (item.type === 'instruction') return item.role === 'developer' ? 'Developer' : 'System';
+  if (item.type === 'tool_call') return item.name || 'tool_call';
+  if (item.type === 'tool_result') return item.name || 'tool_result';
+  if (item.type === 'error') return item.name || 'Error';
+  return item.type;
+}
+
+function collapsedPreview(item) {
+  const text = (item.type === 'tool_call' && item.name ? item.name + ' ' : '') + (item.content || '');
+  const singleLine = text.replace(/\s+/g, ' ').trim();
+  return singleLine.length > 120 ? singleLine.slice(0, 117) + '…' : singleLine;
+}
+
+function confidenceLabel(confidence) {
+  if (confidence === 'exact') return 'exact linkage';
+  if (confidence === 'inferred') return 'history matched';
+  return 'single request';
 }
 
 // ---- detail ----
@@ -237,6 +419,13 @@ function firstLine(s) {
   if (!s) return '';
   const i = s.indexOf('\n');
   return (i >= 0 ? s.slice(0, i) : s).replace(/\r$/, '');
+}
+
+function formatClock(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 connect();

@@ -88,6 +88,8 @@ export function mergeOpenAIEvents(events) {
   let usage = null;
   let recognized = false;
   let done = false;
+  let responseId = '';
+  let model = '';
   const invalid = [];
 
   for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
@@ -96,6 +98,8 @@ export function mergeOpenAIEvents(events) {
     if (!data) continue;
     let payload;
     try { payload = JSON.parse(data); } catch { invalid.push(eventIndex); continue; }
+    responseId ||= typeof payload?.id === 'string' ? payload.id : '';
+    model ||= typeof payload?.model === 'string' ? payload.model : '';
     if (payload?.usage) usage = payload.usage;
     if (!Array.isArray(payload?.choices)) continue;
     recognized = true;
@@ -115,6 +119,8 @@ export function mergeOpenAIEvents(events) {
   return {
     recognized,
     done,
+    responseId,
+    model,
     usage,
     invalid,
     choices: [...choices.values()].sort((a, b) => a.index - b.index),

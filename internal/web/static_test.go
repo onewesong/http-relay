@@ -9,7 +9,7 @@ import (
 
 func TestPreviewModulesAreEmbedded(t *testing.T) {
 	handler, _ := New(Meta{})
-	for _, path := range []string{"/preview/core.mjs", "/preview/viewer.mjs"} {
+	for _, path := range []string{"/preview/core.mjs", "/preview/viewer.mjs", "/conversation.mjs"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)

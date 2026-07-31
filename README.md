@@ -15,6 +15,11 @@ English | [简体中文](./README.zh-CN.md)
 
 </div>
 <img width="1470" height="887" alt="image" src="https://github.com/user-attachments/assets/93c52569-12d5-44cc-9bcf-81224a101a90" />
+support web mode
+<img width="1896" height="943" alt="image" src="https://github.com/user-attachments/assets/19acbf84-23f5-4199-ae64-4f70faae6e6f" />
+can auto merge conversation
+<img width="1879" height="931" alt="image" src="https://github.com/user-attachments/assets/b8822a9d-a8ca-48bc-96d9-e055855ed558" />
+
 
 `http-relay` listens on local HTTP and relays requests in this format:
 

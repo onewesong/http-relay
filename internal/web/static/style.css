@@ -46,6 +46,17 @@ html, body {
 .meta { color: var(--dim); }
 .spacer { flex: 1; }
 .count { color: var(--dim); }
+.toolbar-button, #logout button {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  background: var(--bg);
+  font: inherit;
+  cursor: pointer;
+}
+.toolbar-button:hover:not(:disabled), #logout button:hover { background: var(--bg-sel); }
+.toolbar-button:disabled { cursor: default; opacity: .45; }
 .view-switch { display: flex; margin-left: 8px; }
 .view-switch button {
   padding: 3px 8px;
@@ -61,8 +72,6 @@ html, body {
 .conn { padding: 1px 8px; border-radius: 10px; font-size: 11px; }
 .conn-on { background: #14361f; color: var(--ok); }
 .conn-off { background: #3a1d1d; color: var(--server-err); }
-#logout button { border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; color: var(--fg); background: var(--bg); font: inherit; cursor: pointer; }
-#logout button:hover { background: var(--bg-sel); }
 
 main {
   display: grid;
@@ -77,7 +86,7 @@ main {
 /* ---- request rows ---- */
 .row {
   display: grid;
-  grid-template-columns: 48px 58px 40px 64px 1fr;
+  grid-template-columns: 48px 58px 40px 64px 78px 1fr;
   gap: 8px;
   align-items: baseline;
   padding: 5px 12px;
@@ -90,6 +99,7 @@ main {
 .row .seq { color: var(--dim); }
 .row .method { font-weight: 700; }
 .row .dur { color: var(--dim); text-align: right; }
+.row .time { color: var(--dim); text-align: right; }
 .row .target { overflow: hidden; text-overflow: ellipsis; color: var(--other); }
 .row .err { color: var(--server-err); }
 

@@ -6,6 +6,7 @@ import { buildConversations } from './conversation.mjs';
 
 const txns = new Map();   // seq -> transaction
 const order = [];         // seqs in arrival order
+const clearedTxnIDs = new Set(); // ignored until the page is refreshed
 let selected = null;
 let selectedConversation = null;
 let conversations = [];
@@ -18,11 +19,13 @@ const metaEl = document.getElementById('meta');
 const countEl = document.getElementById('count');
 const statusEl = document.getElementById('status');
 const logoutEl = document.getElementById('logout');
+const clearEl = document.getElementById('clear');
 const viewSwitchEl = document.getElementById('view-switch');
 
 viewSwitchEl.querySelectorAll('button').forEach((button) => {
   button.onclick = () => setTrafficView(button.dataset.view);
 });
+clearEl.onclick = clearTraffic;
 
 // ---- SSE ----
 function connect() {
@@ -59,6 +62,7 @@ function applyMeta(meta) {
 }
 
 function applyTxn(t) {
+  if (clearedTxnIDs.has(t.seq)) return;
   const isNew = !txns.has(t.seq);
   txns.set(t.seq, t);
   if (isNew) order.push(t.seq);
@@ -78,7 +82,7 @@ function applyTxn(t) {
     renderSelectedConversation();
   }
 
-  countEl.textContent = `${order.length} reqs${conversations.length ? ` · ${conversations.length} chats` : ''}`;
+  updateCount();
 }
 
 // ---- list ----
@@ -101,6 +105,7 @@ function rowFor(t) {
   row.appendChild(cell('method m-' + methodClass(t.method), t.method || '-'));
   row.appendChild(cell('status ' + statusClass(t), t.done ? String(t.status) : '···'));
   row.appendChild(cell('dur', t.done ? formatDuration(t.durationMs) : ''));
+  row.appendChild(cell('time', formatClock(t.at)));
 
   const target = document.createElement('span');
   target.className = 'target';
@@ -140,6 +145,26 @@ function setTrafficView(view) {
   renderList();
   if (view === 'requests') renderDetail(txns.get(selected));
   else renderSelectedConversation();
+}
+
+function clearTraffic() {
+  order.forEach((seq) => clearedTxnIDs.add(seq));
+  txns.clear();
+  order.length = 0;
+  selected = null;
+  selectedConversation = null;
+  conversations = [];
+  renderList();
+  const empty = document.createElement('div');
+  empty.className = 'empty';
+  empty.textContent = trafficView === 'requests' ? 'Select a request to inspect it.' : 'No conversation selected.';
+  detailEl.replaceChildren(empty);
+  updateCount();
+}
+
+function updateCount() {
+  countEl.textContent = `${order.length} reqs${conversations.length ? ` · ${conversations.length} chats` : ''}`;
+  clearEl.disabled = order.length === 0;
 }
 
 // ---- conversation projection ----

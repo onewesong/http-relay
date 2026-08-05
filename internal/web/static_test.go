@@ -27,4 +27,7 @@ func TestPreviewModulesAreEmbedded(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `<script type="module" src="app.js"></script>`) {
 		t.Fatal("index does not load app.js as an ES module")
 	}
+	if !strings.Contains(recorder.Body.String(), `id="clear"`) {
+		t.Fatal("index does not include the clear button")
+	}
 }

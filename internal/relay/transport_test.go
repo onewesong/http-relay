@@ -1,9 +1,79 @@
 package relay
 
 import (
+	"net/http"
 	"net/url"
 	"testing"
 )
+
+func TestResolveProxyHeaderOverride(t *testing.T) {
+	t.Parallel()
+
+	tr := &RelayTransport{selector: func(*url.URL) (*url.URL, error) {
+		return url.Parse("http://env-proxy:8080")
+	}}
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	req.Header.Set(ProxyOverrideHeader, "http://user:pass@proxy.example:3128")
+
+	proxyURL, err := tr.resolveProxy(req)
+	if err != nil {
+		t.Fatalf("resolveProxy error: %v", err)
+	}
+	if proxyURL == nil || proxyURL.String() != "http://user:pass@proxy.example:3128" {
+		t.Fatalf("proxy=%v", proxyURL)
+	}
+	if got := req.Header.Get(ProxyOverrideHeader); got != "" {
+		t.Fatalf("override header should be stripped before reaching the target, got %q", got)
+	}
+}
+
+func TestResolveProxyHeaderDirect(t *testing.T) {
+	t.Parallel()
+
+	tr := &RelayTransport{selector: func(*url.URL) (*url.URL, error) {
+		return url.Parse("http://env-proxy:8080")
+	}}
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	req.Header.Set(ProxyOverrideHeader, "direct")
+
+	proxyURL, err := tr.resolveProxy(req)
+	if err != nil {
+		t.Fatalf("resolveProxy error: %v", err)
+	}
+	if proxyURL != nil {
+		t.Fatalf("expected direct connection, got proxy=%v", proxyURL)
+	}
+}
+
+func TestResolveProxyFallsBackToEnv(t *testing.T) {
+	t.Parallel()
+
+	const want = "socks5://127.0.0.1:1080"
+	tr := &RelayTransport{selector: func(*url.URL) (*url.URL, error) {
+		return url.Parse(want)
+	}}
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+
+	proxyURL, err := tr.resolveProxy(req)
+	if err != nil {
+		t.Fatalf("resolveProxy error: %v", err)
+	}
+	if proxyURL == nil || proxyURL.String() != want {
+		t.Fatalf("proxy=%v", proxyURL)
+	}
+}
+
+func TestResolveProxyHeaderInvalid(t *testing.T) {
+	t.Parallel()
+
+	tr := &RelayTransport{selector: func(*url.URL) (*url.URL, error) { return nil, nil }}
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	req.Header.Set(ProxyOverrideHeader, "notaproxy")
+
+	if _, err := tr.resolveProxy(req); err == nil {
+		t.Fatalf("expected error for invalid proxy override header")
+	}
+}
 
 func TestProxySelectorAllProxyOverride(t *testing.T) {
 	t.Parallel()

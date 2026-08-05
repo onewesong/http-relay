@@ -156,7 +156,7 @@ http-relay -w -mask-auth
 ```
 
 会脱敏的请求头：
-`Authorization`、`Proxy-Authorization`、`Cookie`、`X-Api-Key`、`X-Auth-Token`。
+`Authorization`、`Proxy-Authorization`、`Cookie`、`X-Api-Key`、`X-Auth-Token`、`X-Relay-Proxy`。
 
 使用 `WIRE_SCOPE` 控制输出范围（仅 `-w` 开启时生效）：
 
@@ -210,6 +210,26 @@ http-relay \
 HTTPS_PROXY=http://127.0.0.1:7890 http-relay
 ALL_PROXY=socks5://127.0.0.1:1080 http-relay
 HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
+```
+
+### 按请求指定代理
+
+通过 `X-Relay-Proxy` 请求头可为单次请求选择上游代理，覆盖环境变量配置。
+这样同一个 relay 实例即可让不同请求走不同的代理（例如轮换多个代理提供商）。
+该请求头由 relay 消费，不会转发给目标服务器。
+
+- 取值为代理 URL：`http`、`https`、`socks5` 或 `socks5h`。
+- 特殊值 `direct` 强制直连（不走代理）。
+- 未携带该请求头时，沿用环境变量的代理配置。
+
+```bash
+# 仅本次请求走该代理
+curl -H 'X-Relay-Proxy: http://user:pass@proxy.example:3128' \
+  http://127.0.0.1:8080/https://api.ipify.org?format=json
+
+# 强制直连，忽略环境变量代理
+curl -H 'X-Relay-Proxy: direct' \
+  http://127.0.0.1:8080/https://api.ipify.org?format=json
 ```
 
 ## 路由规则

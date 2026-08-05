@@ -32,11 +32,11 @@ type reporter struct {
 	prog *tea.Program
 }
 
-func (r *reporter) RequestDump(seq uint64, head string, body []byte, remote, host string) {
+func (r *reporter) RequestDump(seq uint64, _ string, head string, body []byte, remote, host string) {
 	r.prog.Send(reqMsg{seq: seq, head: head, body: append([]byte(nil), body...), remote: remote, host: host})
 }
 
-func (r *reporter) ResponseDump(seq uint64, head string, body []byte, status string) {
+func (r *reporter) ResponseDump(seq uint64, _ string, head string, body []byte, status string) {
 	r.prog.Send(respMsg{seq: seq, head: head, body: append([]byte(nil), body...), status: status})
 }
 

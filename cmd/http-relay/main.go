@@ -59,7 +59,7 @@ func main() {
 		fmt.Fprintf(out, "  %s version\n\n", name)
 
 		fmt.Fprintf(out, "Modes:\n")
-		fmt.Fprintf(out, "  regular                       target URL comes from /{absolute-url} (default)\n")
+		fmt.Fprintf(out, "  regular                       target URL comes from /{absolute-url} or /{namespace}/{absolute-url} (default)\n")
 		fmt.Fprintf(out, "  reverse:<url>                 reverse proxy to an upstream URL\n\n")
 
 		fmt.Fprintf(out, "Examples:\n")

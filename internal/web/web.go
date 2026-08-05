@@ -1,10 +1,13 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/onewesong/http-relay/internal/relay"
@@ -38,12 +41,72 @@ func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
 	mux.Handle("GET /events", auth.protect(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/transactions", auth.protect(http.HandlerFunc(s.handleTransactions)))
 
-	return mux, &webReporter{store: s}
+	return namespaceRouter(mux), &webReporter{store: s}
 }
 
-func (s *store) handleTransactions(w http.ResponseWriter, _ *http.Request) {
+func (s *store) handleTransactions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.transactions())
+	_ = json.NewEncoder(w).Encode(s.transactions(namespaceFromRequest(r)))
+}
+
+type namespaceContextKey struct{}
+type originalURIContextKey struct{}
+
+func namespaceFromRequest(r *http.Request) string {
+	namespace, _ := r.Context().Value(namespaceContextKey{}).(string)
+	return namespace
+}
+
+func originalURIFromRequest(r *http.Request) string {
+	if uri, ok := r.Context().Value(originalURIContextKey{}).(string); ok {
+		return uri
+	}
+	return r.URL.RequestURI()
+}
+
+// namespaceRouter maps /{namespace}/... onto the existing Web UI routes while
+// retaining the namespace in context for API and SSE filtering.
+func namespaceRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if isRootWebPath(path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		trimmed := strings.TrimPrefix(path, "/")
+		namespace, remainder, hasSlash := strings.Cut(trimmed, "/")
+		decoded, err := url.PathUnescape(namespace)
+		if err != nil || !relay.ValidNamespace(decoded) || decoded == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if !hasSlash {
+			location := path + "/"
+			if r.URL.RawQuery != "" {
+				location += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, location, http.StatusTemporaryRedirect)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), namespaceContextKey{}, decoded)
+		ctx = context.WithValue(ctx, originalURIContextKey{}, r.URL.RequestURI())
+		clone := r.Clone(ctx)
+		clone.URL.Path = "/" + remainder
+		if remainder == "" {
+			clone.URL.Path = "/"
+		}
+		next.ServeHTTP(w, clone)
+	})
+}
+
+func isRootWebPath(path string) bool {
+	if path == "/" || path == "/login" || path == "/logout" || path == "/events" || path == "/api/transactions" ||
+		path == "/index.html" || path == "/app.js" || path == "/style.css" || path == "/conversation.mjs" {
+		return true
+	}
+	return strings.HasPrefix(path, "/preview/")
 }
 
 // webReporter forwards captured traffic into the store, mirroring the merge by
@@ -52,16 +115,16 @@ type webReporter struct {
 	store *store
 }
 
-func (r *webReporter) RequestDump(seq uint64, head string, body []byte, _, _ string) {
-	r.store.mutate(seq, func(t *Transaction) {
+func (r *webReporter) RequestDump(seq uint64, namespace, head string, body []byte, _, _ string) {
+	r.store.mutate(seq, namespace, func(t *Transaction) {
 		t.HasReq = true
 		t.ReqHead = head
 		t.ReqBody = newBody(body)
 	})
 }
 
-func (r *webReporter) ResponseDump(seq uint64, head string, body []byte, _ string) {
-	r.store.mutate(seq, func(t *Transaction) {
+func (r *webReporter) ResponseDump(seq uint64, namespace, head string, body []byte, _ string) {
+	r.store.mutate(seq, namespace, func(t *Transaction) {
 		t.HasResp = true
 		t.RespHead = head
 		t.RespBody = newBody(body)
@@ -73,7 +136,7 @@ func (r *webReporter) Access(rec relay.AccessRecord) {
 	if seq == 0 {
 		seq = r.store.synthID()
 	}
-	r.store.mutate(seq, func(t *Transaction) {
+	r.store.mutate(seq, rec.Namespace, func(t *Transaction) {
 		t.Method = rec.Method
 		t.Target = rec.Target
 		t.Status = rec.Status

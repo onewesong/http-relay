@@ -18,6 +18,7 @@ const maxBodyBytes = 256 * 1024
 type Meta struct {
 	Addr        string `json:"addr"`
 	Mode        string `json:"mode"`
+	Namespace   string `json:"namespace,omitempty"`
 	Proxy       string `json:"proxy"`
 	Timeout     string `json:"timeout"`
 	Version     string `json:"version"`
@@ -57,6 +58,7 @@ func newBody(raw []byte) *Body {
 // seq. It mirrors the TUI's txn but is JSON-serializable for the browser.
 type Transaction struct {
 	Seq        uint64    `json:"seq"`
+	Namespace  string    `json:"namespace,omitempty"`
 	At         time.Time `json:"at"`
 	Method     string    `json:"method"`
 	Target     string    `json:"target"`

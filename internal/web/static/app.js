@@ -52,7 +52,7 @@ function setConn(on) {
 
 function applyMeta(meta) {
   if (!meta) return;
-  const bits = [meta.addr, meta.mode, 'proxy=' + meta.proxy, 'timeout=' + meta.timeout];
+  const bits = [meta.namespace ? 'namespace=' + meta.namespace : 'namespace=(default)', meta.addr, meta.mode, 'proxy=' + meta.proxy, 'timeout=' + meta.timeout];
   metaEl.textContent = bits.filter(Boolean).join('  ·  ');
   if (meta.version) document.title = `http-relay ${meta.version}`;
   logoutEl.hidden = !meta.authEnabled;

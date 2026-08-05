@@ -19,8 +19,8 @@ func decodeTxn(t *testing.T, data []byte) *Transaction {
 
 func TestStoreMergesBySeq(t *testing.T) {
 	s := newStore(Meta{})
-	s.mutate(1, func(tx *Transaction) { tx.HasReq = true; tx.Method = "POST" })
-	s.mutate(1, func(tx *Transaction) { tx.HasResp = true; tx.Status = 201 })
+	s.mutate(1, "", func(tx *Transaction) { tx.HasReq = true; tx.Method = "POST" })
+	s.mutate(1, "", func(tx *Transaction) { tx.HasResp = true; tx.Status = 201 })
 
 	if len(s.order) != 1 {
 		t.Fatalf("want 1 merged txn, got %d", len(s.order))
@@ -35,7 +35,7 @@ func TestStoreEvictsOldest(t *testing.T) {
 	s := newStore(Meta{})
 	s.maxTxns = 2
 	for seq := uint64(1); seq <= 3; seq++ {
-		s.mutate(seq, func(tx *Transaction) {})
+		s.mutate(seq, "", func(tx *Transaction) {})
 	}
 	if len(s.order) != 2 {
 		t.Fatalf("order should be capped at 2, got %d", len(s.order))
@@ -50,9 +50,9 @@ func TestStoreEvictsOldest(t *testing.T) {
 
 func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
 	s := newStore(Meta{Addr: "x"})
-	s.mutate(1, func(tx *Transaction) { tx.Method = "GET" })
+	s.mutate(1, "", func(tx *Transaction) { tx.Method = "GET" })
 
-	ch, replay, meta, cancel := s.subscribe()
+	ch, replay, meta, cancel := s.subscribe("")
 	defer cancel()
 
 	if meta.Addr != "x" {
@@ -66,7 +66,7 @@ func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
 	}
 
 	// A live update reaches the subscriber.
-	s.mutate(2, func(tx *Transaction) { tx.Method = "DELETE" })
+	s.mutate(2, "", func(tx *Transaction) { tx.Method = "DELETE" })
 	select {
 	case data := <-ch:
 		if tx := decodeTxn(t, data); tx.Seq != 2 || tx.Method != "DELETE" {
@@ -79,12 +79,12 @@ func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
 
 func TestStoreDropsSlowSubscriber(t *testing.T) {
 	s := newStore(Meta{})
-	ch, _, _, cancel := s.subscribe()
+	ch, _, _, cancel := s.subscribe("")
 	defer cancel()
 
 	// Never drain: fill the buffer, then one more broadcast drops + closes us.
 	for i := 0; i <= subBuffer; i++ {
-		s.mutate(uint64(i+1), func(tx *Transaction) {})
+		s.mutate(uint64(i+1), "", func(tx *Transaction) {})
 	}
 
 	// Drain the buffered messages; the channel must end up closed.
@@ -100,6 +100,42 @@ func TestStoreDropsSlowSubscriber(t *testing.T) {
 	}
 	if len(s.subs) != 0 {
 		t.Fatalf("dropped subscriber should be removed, %d remain", len(s.subs))
+	}
+}
+
+func TestStoreFiltersNamespaceReplayAndLiveUpdates(t *testing.T) {
+	s := newStore(Meta{})
+	s.mutate(1, "team-a", func(tx *Transaction) { tx.Method = "GET" })
+	s.mutate(2, "team-b", func(tx *Transaction) { tx.Method = "POST" })
+
+	ch, replay, meta, cancel := s.subscribe("team-a")
+	defer cancel()
+	if meta.Namespace != "team-a" {
+		t.Fatalf("meta namespace = %q", meta.Namespace)
+	}
+	if len(replay) != 1 || decodeTxn(t, replay[0]).Seq != 1 {
+		t.Fatalf("unexpected replay: %v", replay)
+	}
+
+	s.mutate(3, "team-b", func(tx *Transaction) {})
+	select {
+	case data := <-ch:
+		t.Fatalf("received another namespace event: %s", data)
+	default:
+	}
+	s.mutate(4, "team-a", func(tx *Transaction) {})
+	select {
+	case data := <-ch:
+		if got := decodeTxn(t, data); got.Seq != 4 || got.Namespace != "team-a" {
+			t.Fatalf("unexpected live event: %+v", got)
+		}
+	default:
+		t.Fatal("expected matching namespace event")
+	}
+
+	got := s.transactions("team-b")
+	if len(got) != 2 || got[0].Seq != 2 || got[1].Seq != 3 {
+		t.Fatalf("unexpected filtered transactions: %+v", got)
 	}
 }
 

@@ -9,13 +9,14 @@ import (
 
 // AccessRecord is one access-log entry produced per relayed request.
 type AccessRecord struct {
-	Seq      uint64
-	Method   string
-	Target   string
-	Status   int
-	Duration time.Duration
-	Bytes    int64
-	Err      string
+	Seq       uint64
+	Namespace string
+	Method    string
+	Target    string
+	Status    int
+	Duration  time.Duration
+	Bytes     int64
+	Err       string
 }
 
 // Reporter consumes the structured output of a relayed request. The handler
@@ -23,9 +24,9 @@ type AccessRecord struct {
 // an interactive TUI, ...) is the reporter's concern.
 type Reporter interface {
 	// RequestDump reports the captured inbound request head and body.
-	RequestDump(seq uint64, head string, body []byte, remote, host string)
+	RequestDump(seq uint64, namespace, head string, body []byte, remote, host string)
 	// ResponseDump reports the captured upstream response head and body.
-	ResponseDump(seq uint64, head string, body []byte, status string)
+	ResponseDump(seq uint64, namespace, head string, body []byte, status string)
 	// Access reports the per-request access-log summary.
 	Access(rec AccessRecord)
 }
@@ -41,7 +42,7 @@ func newLogReporter(logger *log.Logger, palette Palette) *logReporter {
 	return &logReporter{logger: logger, palette: palette}
 }
 
-func (r *logReporter) RequestDump(seq uint64, head string, body []byte, remote, host string) {
+func (r *logReporter) RequestDump(seq uint64, namespace, head string, body []byte, remote, host string) {
 	if r.palette.Enabled() {
 		r.logger.Print(r.renderDump(true, seq, head, body,
 			fmt.Sprintf("remote=%s host=%s", remote, host)))
@@ -60,7 +61,7 @@ func (r *logReporter) RequestDump(seq uint64, head string, body []byte, remote, 
 	)
 }
 
-func (r *logReporter) ResponseDump(seq uint64, head string, body []byte, status string) {
+func (r *logReporter) ResponseDump(seq uint64, namespace, head string, body []byte, status string) {
 	if r.palette.Enabled() {
 		r.logger.Print(r.renderDump(false, seq, head, body,
 			fmt.Sprintf("status=%s", status)))

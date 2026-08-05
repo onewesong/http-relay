@@ -31,6 +31,13 @@ func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-a/?view=requests", nil))
+	location := rec.Header().Get("Location")
+	if rec.Code != http.StatusSeeOther || location != "/login?next=%2Fteam-a%2F%3Fview%3Drequests" {
+		t.Fatalf("namespaced login redirect: status=%d location=%q", rec.Code, location)
+	}
+
+	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/transactions", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("API status = %d, want %d", rec.Code, http.StatusUnauthorized)

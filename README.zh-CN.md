@@ -219,6 +219,21 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 - `http://127.0.0.1:8080/https://example.com`
 - `http://127.0.0.1:8080/http://httpbin.org/post`
 
+也可以在目标 URL 前增加单段 namespace，用于在 Web 界面中隔离查看不同来源的请求：
+
+```bash
+curl -i "http://127.0.0.1:8080/team-a/https://example.com"
+curl -i "http://127.0.0.1:8080/team-b/https://example.com"
+```
+
+namespace 不会发送给上游，因此第一个请求的上游目标仍是 `https://example.com`。使用 `--web` 时，分别访问：
+
+- `http://127.0.0.1:8090/`：查看不带 namespace 的请求
+- `http://127.0.0.1:8090/team-a/`：仅查看 `team-a` 请求
+- `http://127.0.0.1:8090/team-b/`：仅查看 `team-b` 请求
+
+namespace 只支持字母、数字、点、下划线和连字符，长度最多 64 个字符且必须以字母或数字开头。它是流量分组与过滤机制，不是权限隔离机制。反向代理模式不会解析 namespace，路径会完整转发给固定上游。
+
 目标 URL 必须包含 `http://` 或 `https://`。
 
 `reverse:<url>` 模式会将原始路径和查询参数拼接到固定上游，例如：

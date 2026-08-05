@@ -158,29 +158,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	dumpID := uint64(0)
+	resolved, err := h.targetMode.Resolve(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		h.logAccess(dumpID, "", r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
+		return
+	}
 
 	if h.dumpRequest {
 		dumpID = h.dumpSeq.Add(1)
 		if h.dumpScope.HasReq() {
-			if err := h.logIncomingRequest(dumpID, r); err != nil {
+			if err := h.logIncomingRequest(dumpID, resolved.Namespace, r); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-				h.logAccess(dumpID, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+				h.logAccess(dumpID, resolved.Namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 				return
 			}
 		}
 	}
 
-	targetURL, err := h.targetMode.TargetURL(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		h.logAccess(dumpID, r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
-		return
-	}
+	targetURL := resolved.URL
 
 	upstreamReq, err := h.buildUpstreamRequest(r, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return
 	}
 
@@ -188,7 +189,7 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, msg := mapUpstreamError(err)
 		writeError(w, status, msg)
-		h.logAccess(dumpID, r.Method, targetURL.String(), status, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), status, time.Since(start), 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -198,11 +199,11 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			writeError(w, http.StatusBadGateway, "failed to read upstream response")
-			h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
+			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
 			return
 		}
-		if err := h.logUpstreamResponse(dumpID, resp, respBody); err != nil {
-			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), 0, err.Error())
+		if err := h.logUpstreamResponse(dumpID, resolved.Namespace, resp, respBody); err != nil {
+			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), 0, err.Error())
 		}
 
 		copyResponseHeaders(w.Header(), resp.Header)
@@ -210,7 +211,7 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		n, err := w.Write(respBody)
 		bytesWritten = int64(n)
 		if err != nil {
-			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, err.Error())
+			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, err.Error())
 			return
 		}
 	} else {
@@ -219,28 +220,29 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		n, copyErr := io.Copy(w, resp.Body)
 		bytesWritten = n
 		if copyErr != nil {
-			h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, copyErr.Error())
+			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, copyErr.Error())
 			return
 		}
 	}
 
-	h.logAccess(dumpID, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
+	h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
 }
 
 // logAccess emits one access-log entry through the reporter.
-func (h *Handler) logAccess(seq uint64, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
+func (h *Handler) logAccess(seq uint64, namespace, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
 	h.reporter.Access(AccessRecord{
-		Seq:      seq,
-		Method:   method,
-		Target:   target,
-		Status:   status,
-		Duration: dur,
-		Bytes:    bytes,
-		Err:      errMsg,
+		Seq:       seq,
+		Namespace: namespace,
+		Method:    method,
+		Target:    target,
+		Status:    status,
+		Duration:  dur,
+		Bytes:     bytes,
+		Err:       errMsg,
 	})
 }
 
-func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
+func (h *Handler) logIncomingRequest(seq uint64, namespace string, r *http.Request) error {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return fmt.Errorf("read request body: %w", err)
@@ -249,12 +251,12 @@ func (h *Handler) logIncomingRequest(seq uint64, r *http.Request) error {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
-	return h.dumpIncomingRequest(seq, r, body)
+	return h.dumpIncomingRequest(seq, namespace, r, body)
 }
 
 // dumpIncomingRequest reports an already-buffered inbound request to the
 // reporter. The caller owns reading/resetting r.Body.
-func (h *Handler) dumpIncomingRequest(seq uint64, r *http.Request, body []byte) error {
+func (h *Handler) dumpIncomingRequest(seq uint64, namespace string, r *http.Request, body []byte) error {
 	dumpReq := new(http.Request)
 	*dumpReq = *r
 	dumpReq.Header = cloneHeader(r.Header)
@@ -267,7 +269,7 @@ func (h *Handler) dumpIncomingRequest(seq uint64, r *http.Request, body []byte) 
 		return fmt.Errorf("dump request headers: %w", err)
 	}
 
-	h.reporter.RequestDump(seq, string(head), body, r.RemoteAddr, r.Host)
+	h.reporter.RequestDump(seq, namespace, string(head), body, r.RemoteAddr, r.Host)
 	return nil
 }
 
@@ -299,7 +301,7 @@ func maskAuthorizationLike(v string) string {
 	return "<redacted>"
 }
 
-func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []byte) error {
+func (h *Handler) logUpstreamResponse(seq uint64, namespace string, resp *http.Response, body []byte) error {
 	respForDump := new(http.Response)
 	*respForDump = *resp
 	respForDump.Body = io.NopCloser(bytes.NewReader(body))
@@ -309,33 +311,59 @@ func (h *Handler) logUpstreamResponse(seq uint64, resp *http.Response, body []by
 		return fmt.Errorf("dump response headers: %w", err)
 	}
 
-	h.reporter.ResponseDump(seq, string(head), body, resp.Status)
+	h.reporter.ResponseDump(seq, namespace, string(head), body, resp.Status)
 	return nil
 }
 
 func parseTargetURL(r *http.Request) (*url.URL, error) {
+	resolved, err := parseNamespacedTargetURL(r)
+	if err != nil {
+		return nil, err
+	}
+	return resolved.URL, nil
+}
+
+func parseNamespacedTargetURL(r *http.Request) (ResolvedTarget, error) {
 	raw := strings.TrimPrefix(r.RequestURI, "/")
 	if strings.TrimSpace(raw) == "" {
 		raw = strings.TrimPrefix(r.URL.RequestURI(), "/")
 	}
 	if strings.TrimSpace(raw) == "" {
-		return nil, errors.New("missing target URL in path")
+		return ResolvedTarget{}, errors.New("missing target URL in path")
+	}
+
+	namespace := ""
+	if !hasHTTPPrefix(raw) {
+		prefix, targetRaw, ok := strings.Cut(raw, "/")
+		if ok && hasHTTPPrefix(targetRaw) {
+			decoded, err := url.PathUnescape(prefix)
+			if err != nil || !ValidNamespace(decoded) || decoded == "" {
+				return ResolvedTarget{}, errors.New("invalid namespace")
+			}
+			namespace = decoded
+			raw = targetRaw
+		}
 	}
 
 	target, err := url.Parse(normalizeTargetURL(raw))
 	if err != nil {
-		return nil, errors.New("invalid target URL")
+		return ResolvedTarget{}, errors.New("invalid target URL")
 	}
 
 	scheme := strings.ToLower(target.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return nil, errors.New("target URL scheme must be http or https")
+		return ResolvedTarget{}, errors.New("target URL scheme must be http or https")
 	}
 	if target.Host == "" {
-		return nil, errors.New("target URL host is required")
+		return ResolvedTarget{}, errors.New("target URL host is required")
 	}
 
-	return target, nil
+	return ResolvedTarget{URL: target, Namespace: namespace}, nil
+}
+
+func hasHTTPPrefix(raw string) bool {
+	lower := strings.ToLower(raw)
+	return strings.HasPrefix(lower, "http:/") || strings.HasPrefix(lower, "https:/")
 }
 
 func normalizeTargetURL(raw string) string {
@@ -407,30 +435,32 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	if h.dumpRequest {
 		dumpID = h.dumpSeq.Add(1)
 	}
+	resolved, err := h.targetMode.Resolve(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		h.logAccess(dumpID, "", r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
+		return
+	}
+	namespace := resolved.Namespace
 
 	reqBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-		h.logAccess(dumpID, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(reqBody))
 	r.ContentLength = int64(len(reqBody))
 
 	if h.dumpRequest && h.dumpScope.HasReq() {
-		if err := h.dumpIncomingRequest(dumpID, r, reqBody); err != nil {
+		if err := h.dumpIncomingRequest(dumpID, namespace, r, reqBody); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-			h.logAccess(dumpID, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+			h.logAccess(dumpID, namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 			return
 		}
 	}
 
-	targetURL, err := h.targetMode.TargetURL(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		h.logAccess(dumpID, r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
-		return
-	}
+	targetURL := resolved.URL
 
 	// Build the request view handed to onRequest. Static header rules apply
 	// first so the script always has the last word.
@@ -450,19 +480,19 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	if h.engine.HasRequestHook() {
 		sc, err := h.engine.OnRequest(sreq)
 		if err != nil {
-			h.failHook(w, dumpID, r.Method, targetURL.String(), start, err)
+			h.failHook(w, dumpID, namespace, r.Method, targetURL.String(), start, err)
 			return
 		}
 		newTarget, perr := parseScriptTarget(sreq.URL)
 		if perr != nil {
-			h.failHook(w, dumpID, r.Method, sreq.URL, start, perr)
+			h.failHook(w, dumpID, namespace, r.Method, sreq.URL, start, perr)
 			return
 		}
 		targetURL = newTarget
 		shortCircuit = sc
 	}
 
-	status, respHeader, respBody, statusText, ok := h.obtainResponse(w, r, dumpID, start, sreq, targetURL, shortCircuit)
+	status, respHeader, respBody, statusText, ok := h.obtainResponse(w, r, dumpID, namespace, start, sreq, targetURL, shortCircuit)
 	if !ok {
 		return
 	}
@@ -470,7 +500,7 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	if h.engine.HasResponseHook() {
 		sresp := &script.Response{Status: status, Header: cloneHeader(respHeader), Body: respBody}
 		if err := h.engine.OnResponse(sresp, sreq); err != nil {
-			h.failHook(w, dumpID, r.Method, targetURL.String(), start, err)
+			h.failHook(w, dumpID, namespace, r.Method, targetURL.String(), start, err)
 			return
 		}
 		status = sresp.Status
@@ -483,17 +513,17 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.dumpRequest && h.dumpScope.HasResp() {
-		h.dumpScriptedResponse(dumpID, status, statusText, respHeader, respBody)
+		h.dumpScriptedResponse(dumpID, namespace, status, statusText, respHeader, respBody)
 	}
 
 	bytesWritten := h.writeScriptedResponse(w, r, status, respHeader, respBody)
-	h.logAccess(dumpID, r.Method, targetURL.String(), status, time.Since(start), bytesWritten, "")
+	h.logAccess(dumpID, namespace, r.Method, targetURL.String(), status, time.Since(start), bytesWritten, "")
 }
 
 // obtainResponse returns the response to relay, either synthesized from a
 // short-circuit or fetched from upstream. It writes an error response and
 // returns ok=false if the upstream call fails.
-func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID uint64, start time.Time, sreq *script.Request, targetURL *url.URL, shortCircuit *script.Response) (status int, header http.Header, body []byte, statusText string, ok bool) {
+func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID uint64, namespace string, start time.Time, sreq *script.Request, targetURL *url.URL, shortCircuit *script.Response) (status int, header http.Header, body []byte, statusText string, ok bool) {
 	if shortCircuit != nil {
 		status = shortCircuit.Status
 		if status == 0 {
@@ -509,7 +539,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	upstreamReq, err := buildScriptedUpstream(r.Context(), sreq, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return 0, nil, nil, "", false
 	}
 
@@ -517,7 +547,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	if err != nil {
 		s, msg := mapUpstreamError(err)
 		writeError(w, s, msg)
-		h.logAccess(dumpID, r.Method, targetURL.String(), s, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), s, time.Since(start), 0, err.Error())
 		return 0, nil, nil, "", false
 	}
 	defer resp.Body.Close()
@@ -525,7 +555,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	b, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		writeError(w, http.StatusBadGateway, "failed to read upstream response")
-		h.logAccess(dumpID, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
+		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
 		return 0, nil, nil, "", false
 	}
 
@@ -556,13 +586,13 @@ func (h *Handler) writeScriptedResponse(w http.ResponseWriter, r *http.Request, 
 }
 
 // failHook writes a 500 for a failed script hook and records the access log.
-func (h *Handler) failHook(w http.ResponseWriter, seq uint64, method, target string, start time.Time, err error) {
+func (h *Handler) failHook(w http.ResponseWriter, seq uint64, namespace, method, target string, start time.Time, err error) {
 	writeError(w, http.StatusInternalServerError, "script hook failed: "+err.Error())
-	h.logAccess(seq, method, target, http.StatusInternalServerError, time.Since(start), 0, err.Error())
+	h.logAccess(seq, namespace, method, target, http.StatusInternalServerError, time.Since(start), 0, err.Error())
 }
 
 // dumpScriptedResponse reports a (possibly synthesized) response to the reporter.
-func (h *Handler) dumpScriptedResponse(seq uint64, status int, statusText string, header http.Header, body []byte) {
+func (h *Handler) dumpScriptedResponse(seq uint64, namespace string, status int, statusText string, header http.Header, body []byte) {
 	resp := &http.Response{
 		StatusCode:    status,
 		Status:        statusText,
@@ -577,7 +607,7 @@ func (h *Handler) dumpScriptedResponse(seq uint64, status int, statusText string
 	if err != nil {
 		return
 	}
-	h.reporter.ResponseDump(seq, string(head), body, statusText)
+	h.reporter.ResponseDump(seq, namespace, string(head), body, statusText)
 }
 
 // applyHeaderRulesToHeader applies static header rules to header, returning the

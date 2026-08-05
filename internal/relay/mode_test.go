@@ -25,6 +25,24 @@ func TestParseModeRegular(t *testing.T) {
 	}
 }
 
+func TestRegularModeResolveNamespace(t *testing.T) {
+	t.Parallel()
+
+	mode, err := ParseMode("regular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://relay.local/team-a/https://example.com/a?x=1", nil)
+	req.RequestURI = "/team-a/https://example.com/a?x=1"
+	resolved, err := mode.Resolve(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Namespace != "team-a" || resolved.URL.String() != "https://example.com/a?x=1" {
+		t.Fatalf("resolved=%+v", resolved)
+	}
+}
+
 func TestReverseModeTargetURL(t *testing.T) {
 	t.Parallel()
 
@@ -42,6 +60,23 @@ func TestReverseModeTargetURL(t *testing.T) {
 	want := "https://api.example.com/base/v1/users?fixed=1&q=go"
 	if target.String() != want {
 		t.Fatalf("target=%q want=%q", target.String(), want)
+	}
+}
+
+func TestReverseModeDoesNotInterpretNamespace(t *testing.T) {
+	t.Parallel()
+
+	mode, err := ParseMode("reverse:https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://relay.local/team-a/users", nil)
+	resolved, err := mode.Resolve(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Namespace != "" || resolved.URL.String() != "https://api.example.com/team-a/users" {
+		t.Fatalf("resolved=%+v", resolved)
 	}
 }
 

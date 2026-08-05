@@ -295,6 +295,14 @@ Default `regular` mode supports `/{absolute-url}`, for example:
 - `http://127.0.0.1:8080/https://example.com`
 - `http://127.0.0.1:8080/http://httpbin.org/post`
 
+An optional single-segment namespace can group traffic in the Web UI without changing the upstream target:
+
+```bash
+curl -i "http://127.0.0.1:8080/team-a/https://example.com"
+```
+
+With `--web`, open `http://127.0.0.1:8090/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. They group traffic but are not an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
+
 Target URL must include `http://` or `https://`.
 
 `reverse:<url>` mode joins the incoming path and query onto a fixed upstream:
@@ -311,5 +319,4 @@ The target is `https://api.example.com/base/v1/users?q=go`.
 - `400`: missing or invalid target URL
 - `502`: upstream connection failure or timeout
 - `500`: internal server error
-
 

@@ -22,7 +22,7 @@ func (s *store) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering (e.g. nginx)
 
-	ch, replay, meta, cancel := s.subscribe()
+	ch, replay, meta, cancel := s.subscribe(namespaceFromRequest(r))
 	defer cancel()
 
 	if data, err := json.Marshal(event{Type: "meta", Meta: &meta}); err == nil {

@@ -62,7 +62,7 @@ func (a *authenticator) protect(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(originalURIFromRequest(r))), http.StatusSeeOther)
 	})
 }
 

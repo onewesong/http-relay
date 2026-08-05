@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -18,6 +19,21 @@ const (
 type TargetMode struct {
 	kind        TargetModeKind
 	reverseBase *url.URL
+}
+
+// ResolvedTarget is the upstream URL together with the optional namespace used
+// to group captured traffic. Namespace never becomes part of the upstream URL.
+type ResolvedTarget struct {
+	URL       *url.URL
+	Namespace string
+}
+
+var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// ValidNamespace reports whether namespace is safe to use as one URL path
+// segment. The empty string represents the default, un-namespaced view.
+func ValidNamespace(namespace string) bool {
+	return namespace == "" || namespacePattern.MatchString(namespace)
 }
 
 func DefaultTargetMode() TargetMode {
@@ -64,14 +80,25 @@ func (m TargetMode) String() string {
 }
 
 func (m TargetMode) TargetURL(r *http.Request) (*url.URL, error) {
+	resolved, err := m.Resolve(r)
+	if err != nil {
+		return nil, err
+	}
+	return resolved.URL, nil
+}
+
+// Resolve parses the upstream target and its capture namespace. Namespaces are
+// intentionally only recognized in regular mode; reverse mode paths belong to
+// the configured upstream verbatim.
+func (m TargetMode) Resolve(r *http.Request) (ResolvedTarget, error) {
 	switch m.kind {
 	case TargetModeReverse:
 		if m.reverseBase == nil {
-			return nil, errors.New("reverse mode is missing upstream URL")
+			return ResolvedTarget{}, errors.New("reverse mode is missing upstream URL")
 		}
-		return buildReverseTargetURL(m.reverseBase, r), nil
+		return ResolvedTarget{URL: buildReverseTargetURL(m.reverseBase, r)}, nil
 	default:
-		return parseTargetURL(r)
+		return parseNamespacedTargetURL(r)
 	}
 }
 

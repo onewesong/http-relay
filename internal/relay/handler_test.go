@@ -23,6 +23,7 @@ func TestParseTargetURL(t *testing.T) {
 	}{
 		{name: "valid", path: "/https://example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
 		{name: "flattened scheme slash", path: "/https:/api.smith.langchain.com/info", want: "https://api.smith.langchain.com/info", wantErr: false},
+		{name: "namespace", path: "/team-a/https://example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
 		{name: "missing scheme", path: "/example.com", wantErr: true},
 		{name: "invalid", path: "/https://%", wantErr: true},
 		{name: "unsupported scheme", path: "/ftp://example.com", wantErr: true},
@@ -47,6 +48,44 @@ func TestParseTargetURL(t *testing.T) {
 			}
 			if got.String() != tt.want {
 				t.Fatalf("target=%q", got.String())
+			}
+		})
+	}
+}
+
+func TestParseNamespacedTargetURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		path          string
+		wantTarget    string
+		wantNamespace string
+		wantErr       bool
+	}{
+		{path: "/https://example.com", wantTarget: "https://example.com"},
+		{path: "/team-a/https://example.com/v1?q=go", wantTarget: "https://example.com/v1?q=go", wantNamespace: "team-a"},
+		{path: "/team_a/http:/example.com", wantTarget: "http://example.com", wantNamespace: "team_a"},
+		{path: "/bad%2Fname/https://example.com", wantErr: true},
+		{path: "/-bad/https://example.com", wantErr: true},
+		{path: "/a/b/https://example.com", wantErr: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "http://relay.local/", nil)
+			req.RequestURI = tt.path
+			got, err := parseNamespacedTargetURL(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.URL.String() != tt.wantTarget || got.Namespace != tt.wantNamespace {
+				t.Fatalf("got target=%q namespace=%q", got.URL, got.Namespace)
 			}
 		})
 	}
@@ -121,6 +160,42 @@ func TestRelayForwardAndResponse(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "world" {
 		t.Fatalf("body=%q", string(body))
+	}
+}
+
+func TestNamespacedRelayHasEquivalentUpstreamRequest(t *testing.T) {
+	t.Parallel()
+
+	var paths []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		w.Header().Set("X-Upstream", "same")
+		_, _ = w.Write([]byte("same body"))
+	}))
+	defer upstream.Close()
+
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	handler := NewHandler(client, log.New(io.Discard, "", 0), false, DumpScopeReq|DumpScopeResp, false)
+	relayServer := httptest.NewServer(handler)
+	defer relayServer.Close()
+
+	urls := []string{
+		relayServer.URL + "/" + upstream.URL + "/resource?q=1",
+		relayServer.URL + "/team-a/" + upstream.URL + "/resource?q=1",
+	}
+	for _, requestURL := range urls {
+		resp, err := http.Get(requestURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Upstream") != "same" || string(body) != "same body" {
+			t.Fatalf("unexpected response for %s: status=%d body=%q", requestURL, resp.StatusCode, body)
+		}
+	}
+	if len(paths) != 2 || paths[0] != "/resource?q=1" || paths[1] != paths[0] {
+		t.Fatalf("upstream paths differ: %v", paths)
 	}
 }
 

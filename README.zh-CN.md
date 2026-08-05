@@ -44,7 +44,7 @@ go install github.com/onewesong/http-relay/cmd/http-relay@latest
 Docker：
 
 ```bash
-docker run --rm -p 8080:8080 ghcr.io/onewesong/http-relay:latest
+docker run --rm -p 7080:7080 ghcr.io/onewesong/http-relay:latest
 ```
 
 GitHub Actions 镜像发布规则：
@@ -54,7 +54,7 @@ GitHub Actions 镜像发布规则：
 
 ## 快速开始
 
-1. 启动服务（默认 `127.0.0.1:8080`）：
+1. 启动服务（默认 `127.0.0.1:7080`）：
 
 ```bash
 http-relay
@@ -63,7 +63,7 @@ http-relay
 2. 发起请求：
 
 ```bash
-curl -i "http://127.0.0.1:8080/https://example.com"
+curl -i "http://127.0.0.1:7080/https://example.com"
 ```
 
 查看版本：
@@ -76,7 +76,7 @@ http-relay version
 
 ```bash
 http-relay --mode reverse:https://api.example.com
-curl -i "http://127.0.0.1:8080/v1/users"
+curl -i "http://127.0.0.1:7080/v1/users"
 ```
 
 上面的请求会转发到 `https://api.example.com/v1/users`。
@@ -86,14 +86,14 @@ curl -i "http://127.0.0.1:8080/v1/users"
 - `--mode`：转发模式，支持 `regular`（默认）和 `reverse:<url>`
 - `--listen`：监听地址，优先级高于 `--host` / `--port`
 - `--host`：监听主机（默认读取 `HOST`，否则 `127.0.0.1`）
-- `--port`：监听端口（默认读取 `PORT`，否则 `8080`）
+- `--port`：监听端口（默认读取 `PORT`，否则 `7080`）
 - `--timeout`：上游请求超时（默认 `120s`）
 - `-w` / `--dump`：输出请求/响应转储
 - `--dump-scope`：转储范围，支持 `req`、`resp`、`req,resp`
 - `--mask-auth`：请求转储时脱敏认证相关请求头
 - `--tui`：交互式可折叠界面；逐条列出请求，方向键 / `j`、`k` 选择，`enter` 展开该请求的头部与正文，`q` 退出（隐式开启 req+resp 转储，需要在终端中运行）
 - `--web`：启动实时 Web 界面，通过 SSE 把流量推送到浏览器；响应正文可在 Preview/Raw 间切换，Preview 支持可折叠 JSON、沙箱 HTML 和 SSE/OpenAI 消息合并；Conversations 视图可按显式会话 ID、`previous_response_id` 或完整消息历史关联 OpenAI 连续对话，并可跳回原始请求（隐式开启 req+resp 转储，监听在独立端口）
-- `--web-listen`：Web 界面监听地址（默认 `127.0.0.1:8090`）
+- `--web-listen`：Web 界面监听地址（默认 `127.0.0.1:7090`）
 - `--add-header`：给上游请求追加请求头，可重复
 - `--modify-header`：给上游请求设置/覆盖请求头，可重复
 
@@ -107,7 +107,7 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 ## 配置（环境变量）
 
 - `HOST`：监听地址（默认 `127.0.0.1`）
-- `PORT`：监听端口（默认 `8080`）
+- `PORT`：监听端口（默认 `7080`）
 - `WIRE_SCOPE`：`--dump-scope` 的兼容环境变量
 - `WEB_AUTH_KEY`：Web 界面登录密钥；仅在使用 `--web` 时生效。未设置或为空时不启用认证；设置后页面、SSE 和交易 API 需要登录，会话有效期为 24 小时。
 
@@ -117,12 +117,12 @@ Web 认证的 Docker Compose 示例：
 services:
   http-relay:
     image: ghcr.io/onewesong/http-relay:latest
-    command: ["--listen", "0.0.0.0:8080", "--web", "--web-listen", "0.0.0.0:8090"]
+    command: ["--listen", "0.0.0.0:7080", "--web", "--web-listen", "0.0.0.0:7090"]
     environment:
       WEB_AUTH_KEY: "replace-with-a-long-random-secret"
     ports:
-      - "127.0.0.1:8080:8080"
-      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:7080:7080"
+      - "127.0.0.1:7090:7090"
 ```
 
 ### 响应预览实验台
@@ -216,21 +216,21 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 
 默认 `regular` 模式支持 `/{absolute-url}`，例如：
 
-- `http://127.0.0.1:8080/https://example.com`
-- `http://127.0.0.1:8080/http://httpbin.org/post`
+- `http://127.0.0.1:7080/https://example.com`
+- `http://127.0.0.1:7080/http://httpbin.org/post`
 
 也可以在目标 URL 前增加单段 namespace，用于在 Web 界面中隔离查看不同来源的请求：
 
 ```bash
-curl -i "http://127.0.0.1:8080/team-a/https://example.com"
-curl -i "http://127.0.0.1:8080/team-b/https://example.com"
+curl -i "http://127.0.0.1:7080/team-a/https://example.com"
+curl -i "http://127.0.0.1:7080/team-b/https://example.com"
 ```
 
 namespace 不会发送给上游，因此第一个请求的上游目标仍是 `https://example.com`。使用 `--web` 时，分别访问：
 
-- `http://127.0.0.1:8090/`：查看不带 namespace 的请求
-- `http://127.0.0.1:8090/team-a/`：仅查看 `team-a` 请求
-- `http://127.0.0.1:8090/team-b/`：仅查看 `team-b` 请求
+- `http://127.0.0.1:7090/`：查看不带 namespace 的请求
+- `http://127.0.0.1:7090/team-a/`：仅查看 `team-a` 请求
+- `http://127.0.0.1:7090/team-b/`：仅查看 `team-b` 请求
 
 namespace 只支持字母、数字、点、下划线和连字符，长度最多 64 个字符且必须以字母或数字开头。它是流量分组与过滤机制，不是权限隔离机制。反向代理模式不会解析 namespace，路径会完整转发给固定上游。
 
@@ -240,7 +240,7 @@ namespace 只支持字母、数字、点、下划线和连字符，长度最多 
 
 ```bash
 http-relay --mode reverse:https://api.example.com/base
-curl "http://127.0.0.1:8080/v1/users?q=go"
+curl "http://127.0.0.1:7080/v1/users?q=go"
 ```
 
 转发目标为 `https://api.example.com/base/v1/users?q=go`。

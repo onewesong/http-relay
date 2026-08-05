@@ -20,6 +20,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /out/http-relay /usr/local/bin/http-relay
 
-EXPOSE 8080
+EXPOSE 7080
 
 ENTRYPOINT ["/usr/local/bin/http-relay"]

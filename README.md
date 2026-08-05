@@ -51,7 +51,7 @@ go install github.com/onewesong/http-relay/cmd/http-relay@latest
 Docker:
 
 ```bash
-docker run --rm -p 8080:8080 ghcr.io/onewesong/http-relay:latest
+docker run --rm -p 7080:7080 ghcr.io/onewesong/http-relay:latest
 ```
 
 GitHub Actions image publishing:
@@ -61,7 +61,7 @@ GitHub Actions image publishing:
 
 ## Quick Start
 
-1. Start service (default `127.0.0.1:8080`):
+1. Start service (default `127.0.0.1:7080`):
 
 ```bash
 http-relay
@@ -70,7 +70,7 @@ http-relay
 2. Send a request:
 
 ```bash
-curl -i "http://127.0.0.1:8080/https://example.com"
+curl -i "http://127.0.0.1:7080/https://example.com"
 ```
 
 Check version:
@@ -83,7 +83,7 @@ Reverse proxy to a fixed upstream:
 
 ```bash
 http-relay --mode reverse:https://api.example.com
-curl -i "http://127.0.0.1:8080/v1/users"
+curl -i "http://127.0.0.1:7080/v1/users"
 ```
 
 The request above is forwarded to `https://api.example.com/v1/users`.
@@ -93,14 +93,14 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 - `--mode`: target mode, supports `regular` (default) and `reverse:<url>`
 - `--listen`: listen address, overrides `--host` / `--port`
 - `--host`: listen host (defaults to `HOST`, then `127.0.0.1`)
-- `--port`: listen port (defaults to `PORT`, then `8080`)
+- `--port`: listen port (defaults to `PORT`, then `7080`)
 - `--timeout`: upstream request timeout (default: `120s`)
 - `-w` / `--dump`: dump request/response traffic
 - `--dump-scope`: dump scope, supports `req`, `resp`, `req,resp`
 - `--mask-auth`: mask auth-related request headers in request dump
 - `--tui`: interactive collapsible TUI; lists each request, arrow keys / `j`,`k` to select, `enter` to expand its headers and body, `q` to quit (implies dumping req+resp, requires a terminal)
 - `--web`: serve a live web UI that streams traffic to the browser over SSE; response bodies switch between Preview and Raw, with collapsible JSON, sandboxed HTML, and merged SSE/OpenAI messages; the Conversations view links OpenAI turns by explicit conversation IDs, `previous_response_id`, or complete message history and links back to source requests (implies dumping req+resp, served on a separate port)
-- `--web-listen`: listen address for the web UI (default: `127.0.0.1:8090`)
+- `--web-listen`: listen address for the web UI (default: `127.0.0.1:7090`)
 - `--add-header`: add an upstream request header, repeatable
 - `--modify-header`: set/overwrite an upstream request header, repeatable
 - `--script`: path to a JavaScript file with `onRequest` / `onResponse` hooks that rewrite traffic
@@ -117,7 +117,7 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 ## Configuration (Environment Variables)
 
 - `HOST`: listen host (default: `127.0.0.1`)
-- `PORT`: listen port (default: `8080`)
+- `PORT`: listen port (default: `7080`)
 - `WIRE_SCOPE`: compatibility fallback for `--dump-scope`
 - `WEB_AUTH_KEY`: login key for the Web UI, effective only with `--web`. Empty or unset keeps the UI public; when set, the page, SSE, and transaction API require login and sessions last 24 hours.
 
@@ -127,12 +127,12 @@ Docker Compose example with Web authentication:
 services:
   http-relay:
     image: ghcr.io/onewesong/http-relay:latest
-    command: ["--listen", "0.0.0.0:8080", "--web", "--web-listen", "0.0.0.0:8090"]
+    command: ["--listen", "0.0.0.0:7080", "--web", "--web-listen", "0.0.0.0:7090"]
     environment:
       WEB_AUTH_KEY: "replace-with-a-long-random-secret"
     ports:
-      - "127.0.0.1:8080:8080"
-      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:7080:7080"
+      - "127.0.0.1:7090:7090"
 ```
 
 ### Response preview lab
@@ -292,16 +292,16 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 
 Default `regular` mode supports `/{absolute-url}`, for example:
 
-- `http://127.0.0.1:8080/https://example.com`
-- `http://127.0.0.1:8080/http://httpbin.org/post`
+- `http://127.0.0.1:7080/https://example.com`
+- `http://127.0.0.1:7080/http://httpbin.org/post`
 
 An optional single-segment namespace can group traffic in the Web UI without changing the upstream target:
 
 ```bash
-curl -i "http://127.0.0.1:8080/team-a/https://example.com"
+curl -i "http://127.0.0.1:7080/team-a/https://example.com"
 ```
 
-With `--web`, open `http://127.0.0.1:8090/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. They group traffic but are not an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
+With `--web`, open `http://127.0.0.1:7090/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. They group traffic but are not an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
 
 Target URL must include `http://` or `https://`.
 
@@ -309,7 +309,7 @@ Target URL must include `http://` or `https://`.
 
 ```bash
 http-relay --mode reverse:https://api.example.com/base
-curl "http://127.0.0.1:8080/v1/users?q=go"
+curl "http://127.0.0.1:7080/v1/users?q=go"
 ```
 
 The target is `https://api.example.com/base/v1/users?q=go`.
@@ -319,4 +319,3 @@ The target is `https://api.example.com/base/v1/users?q=go`.
 - `400`: missing or invalid target URL
 - `502`: upstream connection failure or timeout
 - `500`: internal server error
-

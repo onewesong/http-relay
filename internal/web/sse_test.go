@@ -119,6 +119,22 @@ func TestNamespacedTransactionsAPIAndPage(t *testing.T) {
 		t.Fatalf("unexpected namespace result: %+v", got)
 	}
 
+	cleared := httptest.NewRecorder()
+	handler.ServeHTTP(cleared, httptest.NewRequest(http.MethodDelete, "/team-a/api/transactions", nil))
+	if cleared.Code != http.StatusNoContent {
+		t.Fatalf("clear status=%d body=%q", cleared.Code, cleared.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-a/api/transactions", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 0 {
+		t.Fatalf("team-a should be empty: got=%+v err=%v", got, err)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-b/api/transactions", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].Seq != 2 {
+		t.Fatalf("team-b should remain: got=%+v err=%v", got, err)
+	}
+
 	redirect := httptest.NewRecorder()
 	handler.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/team-a?x=1", nil))
 	if redirect.Code != http.StatusTemporaryRedirect || redirect.Header().Get("Location") != "/team-a/?x=1" {

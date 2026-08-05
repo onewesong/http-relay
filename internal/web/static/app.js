@@ -6,12 +6,12 @@ import { buildConversations } from './conversation.mjs';
 
 const txns = new Map();   // seq -> transaction
 const order = [];         // seqs in arrival order
-const clearedTxnIDs = new Set(); // ignored until the page is refreshed
 let selected = null;
 let selectedConversation = null;
 let conversations = [];
 let trafficView = 'requests';
 let responseViewMode = loadResponseViewMode();
+let clearing = false;
 
 const listEl = document.getElementById('list');
 const detailEl = document.getElementById('detail');
@@ -25,7 +25,7 @@ const viewSwitchEl = document.getElementById('view-switch');
 viewSwitchEl.querySelectorAll('button').forEach((button) => {
   button.onclick = () => setTrafficView(button.dataset.view);
 });
-clearEl.onclick = clearTraffic;
+clearEl.onclick = requestClear;
 
 // ---- SSE ----
 function connect() {
@@ -45,6 +45,7 @@ function connect() {
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'meta') return applyMeta(msg.meta);
     if (msg.type === 'txn') return applyTxn(msg.txn);
+    if (msg.type === 'clear') return clearTraffic();
   };
 }
 
@@ -62,7 +63,6 @@ function applyMeta(meta) {
 }
 
 function applyTxn(t) {
-  if (clearedTxnIDs.has(t.seq)) return;
   const isNew = !txns.has(t.seq);
   txns.set(t.seq, t);
   if (isNew) order.push(t.seq);
@@ -147,8 +147,25 @@ function setTrafficView(view) {
   else renderSelectedConversation();
 }
 
+async function requestClear() {
+  if (clearing || order.length === 0) return;
+  clearing = true;
+  clearEl.title = '';
+  updateCount();
+  try {
+    const response = await fetch('api/transactions', { method: 'DELETE' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    clearTraffic();
+  } catch (error) {
+    console.error('Failed to clear transactions', error);
+    clearEl.title = `Clear failed: ${error.message || error}`;
+  } finally {
+    clearing = false;
+    updateCount();
+  }
+}
+
 function clearTraffic() {
-  order.forEach((seq) => clearedTxnIDs.add(seq));
   txns.clear();
   order.length = 0;
   selected = null;
@@ -164,7 +181,7 @@ function clearTraffic() {
 
 function updateCount() {
   countEl.textContent = `${order.length} reqs${conversations.length ? ` · ${conversations.length} chats` : ''}`;
-  clearEl.disabled = order.length === 0;
+  clearEl.disabled = clearing || order.length === 0;
 }
 
 // ---- conversation projection ----

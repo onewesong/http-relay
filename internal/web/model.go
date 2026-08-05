@@ -79,7 +79,7 @@ type Transaction struct {
 
 // event is the envelope for one SSE message. Exactly one payload field is set.
 type event struct {
-	Type string       `json:"type"` // "meta" | "txn"
+	Type string       `json:"type"` // "meta" | "txn" | "clear"
 	Meta *Meta        `json:"meta,omitempty"`
 	Txn  *Transaction `json:"txn,omitempty"`
 }

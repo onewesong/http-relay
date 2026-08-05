@@ -132,7 +132,30 @@ func (s *store) transactions(namespace string) []*Transaction {
 	return out
 }
 
+// clear removes retained transactions in namespace and tells every live
+// subscriber of that namespace to clear its local projection as well.
+func (s *store) clear(namespace string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kept := s.order[:0]
+	for _, id := range s.order {
+		if s.byID[id].Namespace == namespace {
+			delete(s.byID, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.order = kept
+	s.broadcastLocked(namespace, encodeClear())
+}
+
 func encodeTxn(t *Transaction) []byte {
 	data, _ := json.Marshal(event{Type: "txn", Txn: t})
+	return data
+}
+
+func encodeClear() []byte {
+	data, _ := json.Marshal(event{Type: "clear"})
 	return data
 }

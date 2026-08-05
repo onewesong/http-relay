@@ -145,3 +145,36 @@ func TestStoreSynthIDAboveRealSeqs(t *testing.T) {
 		t.Fatalf("synth id %d should exceed base %d", id, synthBase)
 	}
 }
+
+func TestStoreClearOnlyOneNamespaceAndBroadcasts(t *testing.T) {
+	s := newStore(Meta{})
+	s.mutate(1, "team-a", func(tx *Transaction) {})
+	s.mutate(2, "team-b", func(tx *Transaction) {})
+	aCh, _, _, cancelA := s.subscribe("team-a")
+	defer cancelA()
+	bCh, _, _, cancelB := s.subscribe("team-b")
+	defer cancelB()
+
+	s.clear("team-a")
+	if got := s.transactions("team-a"); len(got) != 0 {
+		t.Fatalf("team-a was not cleared: %+v", got)
+	}
+	if got := s.transactions("team-b"); len(got) != 1 || got[0].Seq != 2 {
+		t.Fatalf("team-b should remain: %+v", got)
+	}
+
+	select {
+	case data := <-aCh:
+		var ev event
+		if err := json.Unmarshal(data, &ev); err != nil || ev.Type != "clear" {
+			t.Fatalf("unexpected clear event: data=%s err=%v", data, err)
+		}
+	default:
+		t.Fatal("team-a subscriber did not receive clear event")
+	}
+	select {
+	case data := <-bCh:
+		t.Fatalf("team-b subscriber received event: %s", data)
+	default:
+	}
+}

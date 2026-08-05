@@ -40,6 +40,7 @@ func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
 	mux.Handle("GET /", auth.protect(http.FileServerFS(static)))
 	mux.Handle("GET /events", auth.protect(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/transactions", auth.protect(http.HandlerFunc(s.handleTransactions)))
+	mux.Handle("DELETE /api/transactions", auth.protect(http.HandlerFunc(s.handleClearTransactions)))
 
 	return namespaceRouter(mux), &webReporter{store: s}
 }
@@ -47,6 +48,11 @@ func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
 func (s *store) handleTransactions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.transactions(namespaceFromRequest(r)))
+}
+
+func (s *store) handleClearTransactions(w http.ResponseWriter, r *http.Request) {
+	s.clear(namespaceFromRequest(r))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type namespaceContextKey struct{}

@@ -96,18 +96,18 @@ func TestNamespacedTransactionsAPIAndPage(t *testing.T) {
 	reporter.Access(relay.AccessRecord{Seq: 2, Namespace: "team-b", Method: "POST", Status: 201})
 
 	page := httptest.NewRecorder()
-	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/team-a/", nil))
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/namespace/team-a/", nil))
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "http-relay") {
 		t.Fatalf("namespaced page: status=%d body=%q", page.Code, page.Body.String())
 	}
 	asset := httptest.NewRecorder()
-	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/team-a/app.js", nil))
+	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/namespace/team-a/app.js", nil))
 	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "EventSource") {
 		t.Fatalf("namespaced asset: status=%d body=%q", asset.Code, asset.Body.String())
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-a/api/transactions", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/namespace/team-a/api/transactions", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -120,24 +120,48 @@ func TestNamespacedTransactionsAPIAndPage(t *testing.T) {
 	}
 
 	cleared := httptest.NewRecorder()
-	handler.ServeHTTP(cleared, httptest.NewRequest(http.MethodDelete, "/team-a/api/transactions", nil))
+	clearReq := httptest.NewRequest(http.MethodDelete, "/namespace/team-a/api/transactions", nil)
+	clearReq.Header.Set("Origin", "http://example.com")
+	handler.ServeHTTP(cleared, clearReq)
 	if cleared.Code != http.StatusNoContent {
 		t.Fatalf("clear status=%d body=%q", cleared.Code, cleared.Body.String())
 	}
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-a/api/transactions", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/namespace/team-a/api/transactions", nil))
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 0 {
 		t.Fatalf("team-a should be empty: got=%+v err=%v", got, err)
 	}
 	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-b/api/transactions", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/namespace/team-b/api/transactions", nil))
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].Seq != 2 {
 		t.Fatalf("team-b should remain: got=%+v err=%v", got, err)
 	}
 
 	redirect := httptest.NewRecorder()
-	handler.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/team-a?x=1", nil))
-	if redirect.Code != http.StatusTemporaryRedirect || redirect.Header().Get("Location") != "/team-a/?x=1" {
+	handler.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/namespace/team-a?x=1", nil))
+	if redirect.Code != http.StatusTemporaryRedirect || redirect.Header().Get("Location") != "/namespace/team-a/?x=1" {
 		t.Fatalf("redirect status=%d location=%q", redirect.Code, redirect.Header().Get("Location"))
+	}
+	legacy := httptest.NewRecorder()
+	handler.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/team-a/", nil))
+	if legacy.Code != http.StatusNotFound {
+		t.Fatalf("legacy namespace route status=%d", legacy.Code)
+	}
+}
+
+func TestDefaultNamedNamespaceIsDistinctFromRoot(t *testing.T) {
+	handler, reporter := New(Meta{})
+	reporter.Access(relay.AccessRecord{Seq: 1, Namespace: "", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 2, Namespace: "default", Method: "POST", Status: 201})
+	for path, wantSeq := range map[string]uint64{
+		"/api/transactions":                   1,
+		"/namespace/default/api/transactions": 2,
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		var got []Transaction
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].Seq != wantSeq {
+			t.Fatalf("GET %s got=%+v err=%v", path, got, err)
+		}
 	}
 }

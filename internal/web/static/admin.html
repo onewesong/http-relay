@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>http-relay 管理</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div class="admin-shell">
+    <header class="admin-head">
+      <h1>http-relay 管理</h1>
+      <span id="status" class="conn conn-off">offline</span>
+      <span class="spacer"></span>
+      <a href="/">默认视图</a>
+      <form method="post" action="/admin/logout"><button type="submit">退出</button></form>
+    </header>
+    <main class="admin-grid">
+      <section class="panel">
+        <h2>Namespaces</h2>
+        <table>
+          <thead><tr><th>Namespace</th><th>策略</th><th>记录</th><th>订阅</th><th>最后记录</th></tr></thead>
+          <tbody id="namespaces"></tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>创建访问 JWT</h2>
+        <form id="issue-form">
+          <label for="namespace">Namespace</label>
+          <input id="namespace" name="namespace" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}">
+          <label for="ttl">有效期</label>
+          <input id="ttl" name="ttl" value="720h">
+          <label id="permanent-option" class="check" hidden><input id="permanent" name="permanent" type="checkbox">永久有效</label>
+          <button type="submit">创建 JWT</button>
+        </form>
+        <p id="issue-message"></p>
+        <div id="token-result" class="token-result" hidden>
+          <textarea id="token" readonly autocomplete="off"></textarea>
+          <div class="token-actions"><button id="copy" type="button">复制</button><button id="discard" type="button">清除</button></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/admin/app.mjs"></script>
+</body>
+</html>

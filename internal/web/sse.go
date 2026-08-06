@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/onewesong/http-relay/internal/authjwt"
 )
 
 // handleEvents streams transactions to one browser over Server-Sent Events. It
@@ -24,6 +26,8 @@ func (s *store) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ch, replay, meta, cancel := s.subscribe(namespaceFromRequest(r))
 	defer cancel()
+	auth := authFromRequest(r)
+	meta.AuthEnabled = auth.enabled
 
 	if data, err := json.Marshal(event{Type: "meta", Meta: &meta}); err == nil {
 		writeSSE(w, data)
@@ -35,11 +39,24 @@ func (s *store) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(keepAlive)
 	defer ticker.Stop()
+	var expiry <-chan time.Time
+	var expiryTimer *time.Timer
+	if auth.expires != nil {
+		delay := time.Until(auth.expires.Add(authjwt.ClockSkew))
+		if delay <= 0 {
+			return
+		}
+		expiryTimer = time.NewTimer(delay)
+		expiry = expiryTimer.C
+		defer expiryTimer.Stop()
+	}
 
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-expiry:
 			return
 		case data, open := <-ch:
 			if !open {

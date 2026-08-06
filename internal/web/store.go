@@ -20,21 +20,23 @@ const (
 // subscribers. All access is guarded by mu; broadcast marshals under the lock so
 // a concurrent relay mutation can't race the JSON encoder.
 type store struct {
-	mu      sync.Mutex
-	meta    Meta
-	byID    map[uint64]*Transaction
-	order   []uint64 // insertion order, trimmed to maxTxns
-	subs    map[chan []byte]string
-	maxTxns int
-	synth   atomic.Uint64
+	mu        sync.Mutex
+	meta      Meta
+	byID      map[uint64]*Transaction
+	order     []uint64 // insertion order, trimmed to maxTxns
+	subs      map[chan []byte]string
+	adminSubs map[chan struct{}]struct{}
+	maxTxns   int
+	synth     atomic.Uint64
 }
 
 func newStore(meta Meta) *store {
 	return &store{
-		meta:    meta,
-		byID:    make(map[uint64]*Transaction),
-		subs:    make(map[chan []byte]string),
-		maxTxns: defaultMaxTxns,
+		meta:      meta,
+		byID:      make(map[uint64]*Transaction),
+		subs:      make(map[chan []byte]string),
+		adminSubs: make(map[chan struct{}]struct{}),
+		maxTxns:   defaultMaxTxns,
 	}
 }
 
@@ -53,6 +55,7 @@ func (s *store) mutate(seq uint64, namespace string, fn func(*Transaction)) {
 	t.Namespace = namespace
 	fn(t)
 	s.broadcastLocked(namespace, encodeTxn(t))
+	s.notifyAdminsLocked()
 }
 
 func (s *store) upsertLocked(seq uint64) *Transaction {
@@ -96,6 +99,7 @@ func (s *store) subscribe(namespace string) (ch <-chan []byte, replay [][]byte, 
 
 	c := make(chan []byte, subBuffer)
 	s.subs[c] = namespace
+	s.notifyAdminsLocked()
 	meta = s.meta
 
 	replay = make([][]byte, 0, len(s.order))
@@ -112,6 +116,7 @@ func (s *store) subscribe(namespace string) (ch <-chan []byte, replay [][]byte, 
 		// Only delete here; broadcastLocked owns closing dropped channels, so a
 		// double close can't happen.
 		delete(s.subs, c)
+		s.notifyAdminsLocked()
 	}
 	return c, replay, meta, cancel
 }
@@ -148,6 +153,71 @@ func (s *store) clear(namespace string) {
 	}
 	s.order = kept
 	s.broadcastLocked(namespace, encodeClear())
+	s.notifyAdminsLocked()
+}
+
+type namespaceMetric struct {
+	Namespace   string
+	Records     int
+	LastAt      time.Time
+	Subscribers int
+}
+
+func (s *store) namespaceMetrics(configured []string) []namespaceMetric {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	metrics := make(map[string]*namespaceMetric, len(configured)+1)
+	ensure := func(namespace string) *namespaceMetric {
+		if metric := metrics[namespace]; metric != nil {
+			return metric
+		}
+		metric := &namespaceMetric{Namespace: namespace}
+		metrics[namespace] = metric
+		return metric
+	}
+	ensure("")
+	for _, namespace := range configured {
+		ensure(namespace)
+	}
+	for _, id := range s.order {
+		txn := s.byID[id]
+		metric := ensure(txn.Namespace)
+		metric.Records++
+		if txn.At.After(metric.LastAt) {
+			metric.LastAt = txn.At
+		}
+	}
+	for _, namespace := range s.subs {
+		ensure(namespace).Subscribers++
+	}
+	out := make([]namespaceMetric, 0, len(metrics))
+	for _, metric := range metrics {
+		out = append(out, *metric)
+	}
+	return out
+}
+
+func (s *store) subscribeAdmin() (<-chan struct{}, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := make(chan struct{}, 1)
+	s.adminSubs[c] = struct{}{}
+	c <- struct{}{}
+	return c, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		delete(s.adminSubs, c)
+	}
+}
+
+func (s *store) notifyAdminsLocked() {
+	for ch := range s.adminSubs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func encodeTxn(t *Transaction) []byte {

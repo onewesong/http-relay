@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/onewesong/http-relay/internal/config"
 	"github.com/onewesong/http-relay/internal/relay"
 	relayscript "github.com/onewesong/http-relay/internal/script"
 	"github.com/onewesong/http-relay/internal/tui"
@@ -30,6 +31,7 @@ func main() {
 	var modifyHeaders repeatedStringFlag
 
 	showVersion := flag.Bool("version", false, "print version and exit")
+	configPathRaw := flag.String("config", "", "TOML configuration path (or HTTP_RELAY_CONFIG)")
 	modeRaw := flag.String("mode", "regular", "target mode: regular or reverse:<url>")
 	listen := flag.String("listen", "", "listen address, overrides --host and --port")
 	host := flag.String("host", envOrDefault("HOST", "127.0.0.1"), "listen host")
@@ -41,6 +43,7 @@ func main() {
 	tuiFlag := flag.Bool("tui", false, "interactive collapsible TUI (implies dump of req+resp)")
 	webFlag := flag.Bool("web", false, "serve a live web UI on --web-listen (implies dump of req+resp)")
 	webListen := flag.String("web-listen", "127.0.0.1:7090", "listen address for the web UI")
+	webTrustForwarded := flag.Bool("web-trust-forwarded-headers", false, "trust X-Forwarded-Proto/Host for Web origin and cookie handling")
 	scriptPath := flag.String("script", "", "path to a JS file with onRequest/onResponse hooks that rewrite traffic")
 	scriptTimeout := flag.Duration("script-timeout", relayscript.DefaultTimeout, "per-hook execution timeout")
 	scriptReload := flag.String("script-reload", "watch", "hot-reload mode: watch, poll, or off")
@@ -74,6 +77,9 @@ func main() {
 		fmt.Fprintf(out, "  HOST                  listen host fallback (default: 127.0.0.1)\n")
 		fmt.Fprintf(out, "  PORT                  listen port fallback (default: 7080)\n")
 		fmt.Fprintf(out, "  WIRE_SCOPE            dump scope fallback when dump is enabled: req, resp, req,resp (default)\n")
+		fmt.Fprintf(out, "  HTTP_RELAY_CONFIG     TOML configuration path fallback\n")
+		fmt.Fprintf(out, "  WEB_AUTH_KEY          legacy global password for the Web UI\n")
+		fmt.Fprintf(out, "  WEB_AUTH_JWT_SECRET   JWT HMAC secret override (requires TOML mode=jwt)\n")
 		fmt.Fprintf(out, "  ALL_PROXY             proxy for both HTTP and HTTPS, highest priority\n")
 		fmt.Fprintf(out, "  HTTP_PROXY            upstream proxy for HTTP targets\n")
 		fmt.Fprintf(out, "  HTTPS_PROXY           upstream proxy for HTTPS targets\n")
@@ -87,6 +93,19 @@ func main() {
 	}
 
 	logger := log.Default()
+	configPath := appconfig.ResolvePath(*configPathRaw)
+	appCfg, configWarnings, err := appconfig.Load(configPath)
+	if err != nil {
+		logger.Fatalf("invalid config: %v", err)
+	}
+	for _, warning := range configWarnings {
+		logger.Printf("config warning: %s", warning)
+	}
+	legacyWebAuthKey := os.Getenv("WEB_AUTH_KEY")
+	webOptions, err := resolveWebOptions(appCfg, legacyWebAuthKey, *webTrustForwarded)
+	if err != nil {
+		logger.Fatal(err)
+	}
 
 	colorMode, colorOK := relay.ParseColorMode(*colorRaw)
 	if !colorOK {
@@ -196,7 +215,7 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, os.Getenv("WEB_AUTH_KEY"), logger, palette)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, webOptions, logger, palette)
 		return
 	}
 
@@ -220,6 +239,18 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server stopped: %v", err)
 	}
+}
+
+func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bool) (web.Options, error) {
+	opts := web.Options{AuthKey: legacyKey, TrustForwardedHeaders: trustForwarded}
+	if cfg.Web.Auth.Mode != "jwt" {
+		return opts, nil
+	}
+	if legacyKey != "" {
+		return web.Options{}, fmt.Errorf("WEB_AUTH_KEY cannot be used together with web.auth JWT configuration")
+	}
+	opts.JWTAuth = &cfg.Web.Auth
+	return opts, nil
 }
 
 // runTUI starts the relay server in the background and runs the interactive
@@ -274,8 +305,9 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, webAuthKey string, logger *log.Logger, palette relay.Palette) {
-	webHandler, reporter := web.New(meta, web.Options{AuthKey: webAuthKey})
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette) {
+	webOptions.Logger = logger
+	webHandler, reporter := web.New(meta, webOptions)
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
 		TargetMode:   mode,

@@ -46,6 +46,7 @@ Build from source:
 
 ```bash
 go install github.com/onewesong/http-relay/cmd/http-relay@latest
+go install github.com/onewesong/http-relay/cmd/http-relay-auth@latest
 ```
 
 Docker:
@@ -91,6 +92,7 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 ## Command Options
 
 - `--mode`: target mode, supports `regular` (default) and `reverse:<url>`
+- `--config`: TOML configuration path; falls back to `HTTP_RELAY_CONFIG`
 - `--listen`: listen address, overrides `--host` / `--port`
 - `--host`: listen host (defaults to `HOST`, then `127.0.0.1`)
 - `--port`: listen port (defaults to `PORT`, then `7080`)
@@ -101,6 +103,7 @@ The request above is forwarded to `https://api.example.com/v1/users`.
 - `--tui`: interactive collapsible TUI; lists each request, arrow keys / `j`,`k` to select, `enter` to expand its headers and body, `q` to quit (implies dumping req+resp, requires a terminal)
 - `--web`: serve a live web UI that streams traffic to the browser over SSE; response bodies switch between Preview and Raw, with collapsible JSON, sandboxed HTML, and merged SSE/OpenAI messages; the Conversations view links OpenAI turns by explicit conversation IDs, `previous_response_id`, or complete message history and links back to source requests (implies dumping req+resp, served on a separate port)
 - `--web-listen`: listen address for the web UI (default: `127.0.0.1:7090`)
+- `--web-trust-forwarded-headers`: trust reverse-proxy `X-Forwarded-Proto` / `X-Forwarded-Host`
 - `--add-header`: add an upstream request header, repeatable
 - `--modify-header`: set/overwrite an upstream request header, repeatable
 - `--script`: path to a JavaScript file with `onRequest` / `onResponse` hooks that rewrite traffic
@@ -119,7 +122,9 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 - `HOST`: listen host (default: `127.0.0.1`)
 - `PORT`: listen port (default: `7080`)
 - `WIRE_SCOPE`: compatibility fallback for `--dump-scope`
+- `HTTP_RELAY_CONFIG`: TOML configuration path, overridden by `--config`
 - `WEB_AUTH_KEY`: login key for the Web UI, effective only with `--web`. Empty or unset keeps the UI public; when set, the page, SSE, and transaction API require login and sessions last 24 hours.
+- `WEB_AUTH_JWT_SECRET`: overrides the JWT secret in TOML; it does not enable JWT mode by itself.
 
 Docker Compose example with Web authentication:
 
@@ -135,6 +140,79 @@ services:
       - "127.0.0.1:7090:7090"
 ```
 
+### Namespace JWT authentication
+
+JWT mode can protect the default view and each namespace independently. Copy [config.example.toml](config.example.toml), then run `http-relay-auth secret` to generate a secret. A complete configuration looks like this:
+
+```toml
+[web.auth]
+mode = "jwt"
+secret = "replace-with-http-relay-auth-secret-output"
+issuer = "http-relay"
+audience = "http-relay-web"
+token_ttl = "720h"
+max_token_ttl = "2160h"
+allow_permanent_tokens = true
+admin_enabled = true
+default_protected = true
+fallback_protected = false
+trust_forwarded_headers = false
+
+[web.auth.namespaces]
+team-a = true
+team-b = true
+public-demo = false
+```
+
+The secret must be unpadded Base64URL for at least 32 random bytes. Run `chmod 600 http-relay.toml` when embedding it; using `WEB_AUTH_JWT_SECRET` is preferable in deployments. JWT mode cannot be combined with `WEB_AUTH_KEY`.
+
+Start Web mode and create an offline management token:
+
+```bash
+http-relay --config ./http-relay.toml --web
+http-relay-auth issue --config ./http-relay.toml --admin
+```
+
+Paste the management token at `/login` to enter `/admin/`. The page shows record, last-activity, and SSE-subscriber counts across namespaces and can issue tokens restricted to one non-empty namespace. It cannot issue management tokens; always create those offline with `http-relay-auth issue --admin`.
+
+Restricted tokens can also be issued and inspected offline:
+
+```bash
+http-relay-auth issue --config ./http-relay.toml --namespace team-a --ttl 24h
+http-relay-auth issue --config ./http-relay.toml --namespace team-a --permanent
+printf '%s' "$TOKEN" | http-relay-auth inspect --config ./http-relay.toml -
+```
+
+`--permanent` requires `allow_permanent_tokens = true` and creates a JWT without `exp`. Browser cookie cleanup can still require logging in again. The first version has no per-token revocation: rotate the secret and restart to invalidate every old JWT, then create a new management token offline and reissue restricted tokens. Treat management tokens like passwords; never put them in URLs, logs, or shell history.
+
+JWT protects only Web pages, SSE, queries, and Clear operations. It does not authenticate writes to the Relay port. Restrict that port at the network or reverse-proxy layer when exposed beyond localhost.
+
+Docker Compose can mount the full TOML as a Docker Secret:
+
+```yaml
+services:
+  http-relay:
+    image: ghcr.io/onewesong/http-relay:latest
+    command: ["--config", "/run/secrets/http_relay_config", "--listen", "0.0.0.0:7080", "--web", "--web-listen", "0.0.0.0:7090"]
+    secrets: [http_relay_config]
+    ports:
+      - "127.0.0.1:7080:7080"
+      - "127.0.0.1:7090:7090"
+secrets:
+  http_relay_config:
+    file: ./http-relay.toml
+```
+
+Alternatively, mount the secret-free template and inject the secret via environment:
+
+```yaml
+environment:
+  HTTP_RELAY_CONFIG: /etc/http-relay/http-relay.toml
+  WEB_AUTH_JWT_SECRET: "${WEB_AUTH_JWT_SECRET}"
+volumes:
+  - ./config.example.toml:/etc/http-relay/http-relay.toml:ro
+```
+
 ### Response preview lab
 
 When developing preview plugins, start the local workbench without connecting it to proxy traffic:
@@ -145,10 +223,11 @@ go run ./cmd/preview-lab
 
 It listens at `http://127.0.0.1:8091` by default. The page includes editable JSON, HTML, SSE, OpenAI streaming, text, and binary fixtures with instant Preview/Raw switching. Use `-listen` to change the address. The lab is development-only and is not included in the production Web UI assets.
 
-When HTTPS is terminated by Nginx, forward `X-Forwarded-Proto` so the session cookie gets the `Secure` attribute:
+When HTTPS is terminated by Nginx, forward these headers and enable `trust_forwarded_headers` or `--web-trust-forwarded-headers` only when that proxy is trusted:
 
 ```nginx
 proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host $host;
 ```
 
 ## Traffic Dump
@@ -301,7 +380,7 @@ An optional single-segment namespace can group traffic in the Web UI without cha
 curl -i "http://127.0.0.1:7080/team-a/https://example.com"
 ```
 
-With `--web`, open `http://127.0.0.1:7090/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. They group traffic but are not an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
+With `--web`, open `http://127.0.0.1:7090/namespace/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. Old Web paths such as `/team-a/` are not supported or redirected. Without JWT they only group traffic; JWT mode makes Web reads and Clear operations an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
 
 Target URL must include `http://` or `https://`.
 

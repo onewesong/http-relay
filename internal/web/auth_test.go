@@ -31,9 +31,9 @@ func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/team-a/?view=requests", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/namespace/team-a/?view=requests", nil))
 	location := rec.Header().Get("Location")
-	if rec.Code != http.StatusSeeOther || location != "/login?next=%2Fteam-a%2F%3Fview%3Drequests" {
+	if rec.Code != http.StatusSeeOther || location != "/login?next=%2Fnamespace%2Fteam-a%2F%3Fview%3Drequests" {
 		t.Fatalf("namespaced login redirect: status=%d location=%q", rec.Code, location)
 	}
 
@@ -51,7 +51,7 @@ func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 	wrong := loginRequest("wrong", "/")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, wrong)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "密钥不正确") || len(rec.Result().Cookies()) != 0 {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "密钥无效") || len(rec.Result().Cookies()) != 0 {
 		t.Fatalf("wrong login: status=%d body=%q cookies=%v", rec.Code, rec.Body.String(), rec.Result().Cookies())
 	}
 
@@ -85,6 +85,7 @@ func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.AddCookie(cookies[0])
+	req.Header.Set("Origin", "http://example.com")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
@@ -96,13 +97,13 @@ func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 }
 
 func TestSessionExpiryAndSecureForwardedCookie(t *testing.T) {
-	a := newAuthenticator(Options{AuthKey: "key", SessionTTL: time.Hour})
+	a := newAuthenticator(Options{AuthKey: "key", SessionTTL: time.Hour, TrustForwardedHeaders: true})
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	a.now = func() time.Time { return now }
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")
-	a.setSession(rec, req)
+	a.setLegacySession(rec, req)
 	cookie := rec.Result().Cookies()[0]
 	if !cookie.Secure {
 		t.Fatal("forwarded HTTPS session cookie must be Secure")
@@ -110,14 +111,14 @@ func TestSessionExpiryAndSecureForwardedCookie(t *testing.T) {
 
 	check := httptest.NewRequest(http.MethodGet, "/", nil)
 	check.AddCookie(cookie)
-	if !a.validSession(check) {
+	if _, ok := a.validLegacySession(check); !ok {
 		t.Fatal("fresh session should be valid")
 	}
-	if newAuthenticator(Options{AuthKey: "key", SessionTTL: time.Hour}).validSession(check) {
+	if _, ok := newAuthenticator(Options{AuthKey: "key", SessionTTL: time.Hour}).validLegacySession(check); ok {
 		t.Fatal("session must be invalid after a server restart")
 	}
 	now = now.Add(time.Hour)
-	if a.validSession(check) {
+	if _, ok := a.validLegacySession(check); ok {
 		t.Fatal("expired session should be invalid")
 	}
 }
@@ -126,5 +127,6 @@ func loginRequest(key, next string) *http.Request {
 	form := url.Values{"key": {key}, "next": {next}}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
 	return req
 }

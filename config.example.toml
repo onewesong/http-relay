@@ -1,0 +1,21 @@
+[web.auth]
+mode = "jwt"
+
+# Generate with `http-relay-auth secret`. Prefer WEB_AUTH_JWT_SECRET in
+# deployments; uncomment this only when the file itself is protected by 0600.
+# secret = "replace-with-an-unpadded-base64url-secret"
+
+issuer = "http-relay"
+audience = "http-relay-web"
+token_ttl = "720h"
+max_token_ttl = "2160h"
+allow_permanent_tokens = false
+admin_enabled = true
+default_protected = true
+fallback_protected = true
+trust_forwarded_headers = false
+
+[web.auth.namespaces]
+team-a = true
+team-b = true
+public-demo = false

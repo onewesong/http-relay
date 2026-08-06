@@ -2,7 +2,10 @@
 set -eu
 
 REPO="${HTTP_RELAY_REPO:-onewesong/http-relay}"
-BINARY="${HTTP_RELAY_BINARY:-http-relay}"
+BINARIES="${HTTP_RELAY_BINARIES:-http-relay http-relay-auth}"
+if [ -n "${HTTP_RELAY_BINARY:-}" ]; then
+  BINARIES="$HTTP_RELAY_BINARY"
+fi
 VERSION="${VERSION:-latest}"
 BINDIR="${BINDIR:-${HTTP_RELAY_INSTALL_DIR:-/usr/local/bin}}"
 API_BASE="${GITHUB_API_URL:-https://api.github.com}"
@@ -173,9 +176,10 @@ verify_checksum() {
 
 install_binary() {
   src="$1"
-  dst="$BINDIR/$BINARY"
+  binary="$2"
+  dst="$BINDIR/$binary"
 
-  if [ "$(basename "$src")" = "$BINARY.exe" ]; then
+  if [ "$(basename "$src")" = "$binary.exe" ]; then
     dst="$dst.exe"
   fi
 
@@ -244,12 +248,13 @@ main() {
       ;;
   esac
 
-  binary_path="$(find "$extract_dir" -type f \( -name "$BINARY" -o -name "$BINARY.exe" \) | head -n 1)"
-  [ -n "$binary_path" ] || fail "$BINARY binary was not found in $archive_name"
-
-  install_binary "$binary_path"
-  info "installed to $BINDIR"
-  "$BINDIR/$BINARY" version 2>/dev/null || true
+  for binary in $BINARIES; do
+    binary_path="$(find "$extract_dir" -type f \( -name "$binary" -o -name "$binary.exe" \) | head -n 1)"
+    [ -n "$binary_path" ] || fail "$binary binary was not found in $archive_name"
+    install_binary "$binary_path" "$binary"
+    info "installed $binary to $BINDIR"
+  done
+  "$BINDIR/http-relay" version 2>/dev/null || true
 }
 
 main "$@"

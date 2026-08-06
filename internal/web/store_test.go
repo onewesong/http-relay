@@ -51,6 +51,7 @@ func TestStoreEvictsOldest(t *testing.T) {
 func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
 	s := newStore(Meta{Addr: "x"})
 	s.mutate(1, "", func(tx *Transaction) { tx.Method = "GET" })
+	s.mutate(2, "", func(tx *Transaction) { tx.Method = "POST" })
 
 	ch, replay, meta, cancel := s.subscribe("")
 	defer cancel()
@@ -58,18 +59,18 @@ func TestStoreSubscribeReplaysThenStreams(t *testing.T) {
 	if meta.Addr != "x" {
 		t.Fatalf("meta not propagated: %+v", meta)
 	}
-	if len(replay) != 1 {
-		t.Fatalf("want 1 replayed event, got %d", len(replay))
+	if len(replay) != 2 {
+		t.Fatalf("want 2 replayed events, got %d", len(replay))
 	}
-	if tx := decodeTxn(t, replay[0]); tx.Seq != 1 || tx.Method != "GET" {
-		t.Fatalf("bad replay txn: %+v", tx)
+	if newest, oldest := decodeTxn(t, replay[0]), decodeTxn(t, replay[1]); newest.Seq != 2 || oldest.Seq != 1 {
+		t.Fatalf("replay must be newest-first: newest=%+v oldest=%+v", newest, oldest)
 	}
 
 	// A live update reaches the subscriber.
-	s.mutate(2, "", func(tx *Transaction) { tx.Method = "DELETE" })
+	s.mutate(3, "", func(tx *Transaction) { tx.Method = "DELETE" })
 	select {
 	case data := <-ch:
-		if tx := decodeTxn(t, data); tx.Seq != 2 || tx.Method != "DELETE" {
+		if tx := decodeTxn(t, data); tx.Seq != 3 || tx.Method != "DELETE" {
 			t.Fatalf("bad live txn: %+v", tx)
 		}
 	default:
@@ -134,7 +135,7 @@ func TestStoreFiltersNamespaceReplayAndLiveUpdates(t *testing.T) {
 	}
 
 	got := s.transactions("team-b")
-	if len(got) != 2 || got[0].Seq != 2 || got[1].Seq != 3 {
+	if len(got) != 2 || got[0].Seq != 3 || got[1].Seq != 2 {
 		t.Fatalf("unexpected filtered transactions: %+v", got)
 	}
 }

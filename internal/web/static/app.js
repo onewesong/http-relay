@@ -5,7 +5,7 @@ import { createBodyViewer, renderJSON } from './preview/viewer.mjs';
 import { buildConversations } from './conversation.mjs';
 
 const txns = new Map();   // seq -> transaction
-const order = [];         // seqs in arrival order
+const order = [];         // seqs sorted newest-first
 let selected = null;
 let selectedConversation = null;
 let conversations = [];
@@ -65,16 +65,26 @@ function applyMeta(meta) {
 function applyTxn(t) {
   const isNew = !txns.has(t.seq);
   txns.set(t.seq, t);
-  if (isNew) order.push(t.seq);
+  if (isNew) {
+    order.push(t.seq);
+    order.sort(compareTransactionRecency);
+  }
   if (selected === null && isNew) selected = t.seq;
-  conversations = buildConversations(order.map((seq) => txns.get(seq)));
+  // Conversation recognition is chronological even though both visible lists
+  // are newest-first. This preserves message/timeline ordering within a chat.
+  conversations = buildConversations([...order].reverse().map((seq) => txns.get(seq)));
+  conversations.sort((a, b) => timestamp(b.updatedAt) - timestamp(a.updatedAt));
   if (!conversations.some((conversation) => conversation.id === selectedConversation)) {
     selectedConversation = conversations[0]?.id || null;
   }
 
-  const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 24;
+  const oldHeight = listEl.scrollHeight;
+  const atTop = listEl.scrollTop < 24;
   renderList();
-  if (isNew && atBottom) listEl.scrollTop = listEl.scrollHeight;
+  if (isNew) {
+    if (atTop) listEl.scrollTop = 0;
+    else listEl.scrollTop += listEl.scrollHeight - oldHeight;
+  }
 
   if (trafficView === 'requests') {
     if (t.seq === selected) renderDetail(t);
@@ -83,6 +93,17 @@ function applyTxn(t) {
   }
 
   updateCount();
+}
+
+function compareTransactionRecency(aSeq, bSeq) {
+  const timeDifference = timestamp(txns.get(bSeq)?.at) - timestamp(txns.get(aSeq)?.at);
+  if (timeDifference) return timeDifference;
+  return Number(bSeq) - Number(aSeq);
+}
+
+function timestamp(value) {
+  const parsed = Date.parse(value || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 // ---- list ----

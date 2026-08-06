@@ -103,7 +103,8 @@ func (s *store) subscribe(namespace string) (ch <-chan []byte, replay [][]byte, 
 	meta = s.meta
 
 	replay = make([][]byte, 0, len(s.order))
-	for _, id := range s.order {
+	for i := len(s.order) - 1; i >= 0; i-- {
+		id := s.order[i]
 		if s.byID[id].Namespace == namespace {
 			replay = append(replay, encodeTxn(s.byID[id]))
 		}
@@ -127,7 +128,8 @@ func (s *store) transactions(namespace string) []*Transaction {
 	defer s.mu.Unlock()
 
 	out := make([]*Transaction, 0, len(s.order))
-	for _, id := range s.order {
+	for i := len(s.order) - 1; i >= 0; i-- {
+		id := s.order[i]
 		if s.byID[id].Namespace != namespace {
 			continue
 		}

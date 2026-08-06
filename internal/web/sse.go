@@ -10,8 +10,8 @@ import (
 )
 
 // handleEvents streams transactions to one browser over Server-Sent Events. It
-// first sends the relay meta and the retained history, then live updates until
-// the client disconnects.
+// first sends the relay meta and retained history newest-first, then live
+// updates until the client disconnects.
 func (s *store) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {

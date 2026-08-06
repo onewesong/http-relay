@@ -115,6 +115,7 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 - `HTTP_RELAY_CONFIG`：TOML 配置文件路径，优先级低于 `--config`
 - `WEB_AUTH_KEY`：Web 界面登录密钥；仅在使用 `--web` 时生效。未设置或为空时不启用认证；设置后页面、SSE 和交易 API 需要登录，会话有效期为 24 小时。
 - `WEB_AUTH_JWT_SECRET`：覆盖 TOML 中的 JWT Secret；它不会单独启用 JWT 模式。
+- `WEB_MAX_TRANSACTIONS_PER_NAMESPACE`：每个 namespace 保留的最大交易记录数，默认 `100`，优先级高于 TOML。
 
 Web 认证的 Docker Compose 示例：
 
@@ -135,6 +136,9 @@ services:
 JWT 模式可分别保护默认视图和每个 namespace。复制 [config.example.toml](config.example.toml)，然后运行 `http-relay-auth secret` 生成 Secret。完整配置如下：
 
 ```toml
+[web]
+max_transactions_per_namespace = 100
+
 [web.auth]
 mode = "jwt"
 secret = "replace-with-http-relay-auth-secret-output"
@@ -152,6 +156,12 @@ trust_forwarded_headers = false
 team-a = true
 team-b = true
 public-demo = false
+```
+
+`max_transactions_per_namespace` 对每个 namespace 独立生效；无 namespace 的默认视图也作为一个独立分组。超过上限时只淘汰该 namespace 最旧的记录。也可以临时覆盖：
+
+```bash
+WEB_MAX_TRANSACTIONS_PER_NAMESPACE=500 http-relay --config ./config.toml --web
 ```
 
 Secret 必须是至少 32 字节随机数据的无 padding Base64URL 编码。配置内嵌 Secret 时应执行 `chmod 600 http-relay.toml`；生产环境更推荐通过 `WEB_AUTH_JWT_SECRET` 覆盖。JWT 模式不能与 `WEB_AUTH_KEY` 同时使用。

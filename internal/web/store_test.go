@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/onewesong/http-relay/internal/relay"
 )
 
 func decodeTxn(t *testing.T, data []byte) *Transaction {
@@ -17,13 +19,25 @@ func decodeTxn(t *testing.T, data []byte) *Transaction {
 	return ev.Txn
 }
 
+func TestWebOptionSetsPerNamespaceLimit(t *testing.T) {
+	_, reporter := New(Meta{}, Options{MaxTransactionsPerNamespace: 2})
+	for seq := uint64(1); seq <= 3; seq++ {
+		reporter.Access(relay.AccessRecord{Seq: seq, Namespace: "team-a"})
+	}
+	store := reporter.(*webReporter).store
+	got := store.transactions("team-a")
+	if len(got) != 2 || got[0].Seq != 3 || got[1].Seq != 2 {
+		t.Fatalf("configured per-namespace limit not applied: %+v", got)
+	}
+}
+
 func TestStoreMergesBySeq(t *testing.T) {
 	s := newStore(Meta{})
 	s.mutate(1, "", func(tx *Transaction) { tx.HasReq = true; tx.Method = "POST" })
 	s.mutate(1, "", func(tx *Transaction) { tx.HasResp = true; tx.Status = 201 })
 
-	if len(s.order) != 1 {
-		t.Fatalf("want 1 merged txn, got %d", len(s.order))
+	if len(s.orders[""]) != 1 {
+		t.Fatalf("want 1 merged txn, got %d", len(s.orders[""]))
 	}
 	got := s.byID[1]
 	if !got.HasReq || !got.HasResp || got.Method != "POST" || got.Status != 201 {
@@ -31,20 +45,24 @@ func TestStoreMergesBySeq(t *testing.T) {
 	}
 }
 
-func TestStoreEvictsOldest(t *testing.T) {
+func TestStoreEvictsOldestPerNamespace(t *testing.T) {
 	s := newStore(Meta{})
-	s.maxTxns = 2
+	s.maxTxnsPerNamespace = 2
 	for seq := uint64(1); seq <= 3; seq++ {
-		s.mutate(seq, "", func(tx *Transaction) {})
+		s.mutate(seq, "team-a", func(tx *Transaction) {})
 	}
-	if len(s.order) != 2 {
-		t.Fatalf("order should be capped at 2, got %d", len(s.order))
+	s.mutate(4, "team-b", func(tx *Transaction) {})
+	s.mutate(5, "team-b", func(tx *Transaction) {})
+	if len(s.orders["team-a"]) != 2 || len(s.orders["team-b"]) != 2 {
+		t.Fatalf("each namespace should retain two: %+v", s.orders)
 	}
 	if _, ok := s.byID[1]; ok {
-		t.Fatal("oldest (seq 1) should have been evicted")
+		t.Fatal("oldest team-a record should have been evicted")
 	}
-	if _, ok := s.byID[3]; !ok {
-		t.Fatal("newest (seq 3) should be retained")
+	for _, seq := range []uint64{2, 3, 4, 5} {
+		if _, ok := s.byID[seq]; !ok {
+			t.Fatalf("record %d should be retained", seq)
+		}
 	}
 }
 

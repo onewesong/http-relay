@@ -40,6 +40,9 @@ JWT Secret 优先级：
 ### TOML 示例
 
 ```toml
+[web]
+max_transactions_per_namespace = 100
+
 [web.auth]
 mode = "jwt"
 secret = "replace-with-a-random-base64url-secret"

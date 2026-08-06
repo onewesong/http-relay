@@ -1,3 +1,7 @@
+[web]
+# Maximum retained transactions for each namespace, including the default view.
+max_transactions_per_namespace = 100
+
 [web.auth]
 mode = "jwt"
 

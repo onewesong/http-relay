@@ -5,11 +5,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	appconfig "github.com/onewesong/http-relay/internal/config"
 )
 
 const (
-	// defaultMaxTxns bounds retained history; oldest entries are evicted.
-	defaultMaxTxns = 1000
+	// defaultMaxTxnsPerNamespace bounds each namespace independently; oldest
+	// entries in that namespace are evicted.
+	defaultMaxTxnsPerNamespace = appconfig.DefaultMaxTransactionsPerNamespace
 	// subBuffer is the per-subscriber queue depth before a slow client is dropped.
 	subBuffer = 256
 	// synthBase keeps synthetic ids (for seq==0 access entries) clear of real seqs.
@@ -20,23 +23,24 @@ const (
 // subscribers. All access is guarded by mu; broadcast marshals under the lock so
 // a concurrent relay mutation can't race the JSON encoder.
 type store struct {
-	mu        sync.Mutex
-	meta      Meta
-	byID      map[uint64]*Transaction
-	order     []uint64 // insertion order, trimmed to maxTxns
-	subs      map[chan []byte]string
-	adminSubs map[chan struct{}]struct{}
-	maxTxns   int
-	synth     atomic.Uint64
+	mu                  sync.Mutex
+	meta                Meta
+	byID                map[uint64]*Transaction
+	orders              map[string][]uint64 // insertion order per namespace
+	subs                map[chan []byte]string
+	adminSubs           map[chan struct{}]struct{}
+	maxTxnsPerNamespace int
+	synth               atomic.Uint64
 }
 
 func newStore(meta Meta) *store {
 	return &store{
-		meta:      meta,
-		byID:      make(map[uint64]*Transaction),
-		subs:      make(map[chan []byte]string),
-		adminSubs: make(map[chan struct{}]struct{}),
-		maxTxns:   defaultMaxTxns,
+		meta:                meta,
+		byID:                make(map[uint64]*Transaction),
+		orders:              make(map[string][]uint64),
+		subs:                make(map[chan []byte]string),
+		adminSubs:           make(map[chan struct{}]struct{}),
+		maxTxnsPerNamespace: defaultMaxTxnsPerNamespace,
 	}
 }
 
@@ -51,26 +55,50 @@ func (s *store) mutate(seq uint64, namespace string, fn func(*Transaction)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	t := s.upsertLocked(seq)
-	t.Namespace = namespace
+	t := s.upsertLocked(seq, namespace)
 	fn(t)
 	s.broadcastLocked(namespace, encodeTxn(t))
 	s.notifyAdminsLocked()
 }
 
-func (s *store) upsertLocked(seq uint64) *Transaction {
+func (s *store) upsertLocked(seq uint64, namespace string) *Transaction {
 	if t, ok := s.byID[seq]; ok {
+		if t.Namespace != namespace {
+			s.removeFromOrderLocked(t.Namespace, seq)
+			t.Namespace = namespace
+			s.appendToOrderLocked(namespace, seq)
+		}
 		return t
 	}
-	t := &Transaction{Seq: seq, At: time.Now()}
+	t := &Transaction{Seq: seq, Namespace: namespace, At: time.Now()}
 	s.byID[seq] = t
-	s.order = append(s.order, seq)
-	if len(s.order) > s.maxTxns {
-		oldest := s.order[0]
-		s.order = s.order[1:]
-		delete(s.byID, oldest)
-	}
+	s.appendToOrderLocked(namespace, seq)
 	return t
+}
+
+func (s *store) appendToOrderLocked(namespace string, seq uint64) {
+	order := append(s.orders[namespace], seq)
+	if len(order) > s.maxTxnsPerNamespace {
+		delete(s.byID, order[0])
+		order = order[1:]
+	}
+	s.orders[namespace] = order
+}
+
+func (s *store) removeFromOrderLocked(namespace string, seq uint64) {
+	order := s.orders[namespace]
+	for i, id := range order {
+		if id != seq {
+			continue
+		}
+		order = append(order[:i], order[i+1:]...)
+		break
+	}
+	if len(order) == 0 {
+		delete(s.orders, namespace)
+		return
+	}
+	s.orders[namespace] = order
 }
 
 // broadcastLocked sends data to every subscriber without blocking; a subscriber
@@ -102,12 +130,10 @@ func (s *store) subscribe(namespace string) (ch <-chan []byte, replay [][]byte, 
 	s.notifyAdminsLocked()
 	meta = s.meta
 
-	replay = make([][]byte, 0, len(s.order))
-	for i := len(s.order) - 1; i >= 0; i-- {
-		id := s.order[i]
-		if s.byID[id].Namespace == namespace {
-			replay = append(replay, encodeTxn(s.byID[id]))
-		}
+	order := s.orders[namespace]
+	replay = make([][]byte, 0, len(order))
+	for i := len(order) - 1; i >= 0; i-- {
+		replay = append(replay, encodeTxn(s.byID[order[i]]))
 	}
 	meta.Namespace = namespace
 
@@ -127,12 +153,10 @@ func (s *store) transactions(namespace string) []*Transaction {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	out := make([]*Transaction, 0, len(s.order))
-	for i := len(s.order) - 1; i >= 0; i-- {
-		id := s.order[i]
-		if s.byID[id].Namespace != namespace {
-			continue
-		}
+	order := s.orders[namespace]
+	out := make([]*Transaction, 0, len(order))
+	for i := len(order) - 1; i >= 0; i-- {
+		id := order[i]
 		cp := *s.byID[id] // shallow copy; Body pointers are immutable once set
 		out = append(out, &cp)
 	}
@@ -145,15 +169,10 @@ func (s *store) clear(namespace string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	kept := s.order[:0]
-	for _, id := range s.order {
-		if s.byID[id].Namespace == namespace {
-			delete(s.byID, id)
-			continue
-		}
-		kept = append(kept, id)
+	for _, id := range s.orders[namespace] {
+		delete(s.byID, id)
 	}
-	s.order = kept
+	delete(s.orders, namespace)
 	s.broadcastLocked(namespace, encodeClear())
 	s.notifyAdminsLocked()
 }
@@ -182,12 +201,13 @@ func (s *store) namespaceMetrics(configured []string) []namespaceMetric {
 	for _, namespace := range configured {
 		ensure(namespace)
 	}
-	for _, id := range s.order {
-		txn := s.byID[id]
-		metric := ensure(txn.Namespace)
-		metric.Records++
-		if txn.At.After(metric.LastAt) {
-			metric.LastAt = txn.At
+	for namespace, order := range s.orders {
+		metric := ensure(namespace)
+		metric.Records = len(order)
+		for _, id := range order {
+			if txn := s.byID[id]; txn.At.After(metric.LastAt) {
+				metric.LastAt = txn.At
+			}
 		}
 	}
 	for _, namespace := range s.subs {

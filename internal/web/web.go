@@ -26,6 +26,9 @@ func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
 	}
 	auth := newAuthenticator(opts)
 	s := newStore(meta)
+	if opts.MaxTransactionsPerNamespace > 0 {
+		s.maxTxnsPerNamespace = opts.MaxTransactionsPerNamespace
+	}
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

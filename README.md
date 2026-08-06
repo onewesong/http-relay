@@ -125,6 +125,7 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 - `HTTP_RELAY_CONFIG`: TOML configuration path, overridden by `--config`
 - `WEB_AUTH_KEY`: login key for the Web UI, effective only with `--web`. Empty or unset keeps the UI public; when set, the page, SSE, and transaction API require login and sessions last 24 hours.
 - `WEB_AUTH_JWT_SECRET`: overrides the JWT secret in TOML; it does not enable JWT mode by itself.
+- `WEB_MAX_TRANSACTIONS_PER_NAMESPACE`: maximum retained transactions per namespace, defaults to `100` and overrides TOML.
 
 Docker Compose example with Web authentication:
 
@@ -145,6 +146,9 @@ services:
 JWT mode can protect the default view and each namespace independently. Copy [config.example.toml](config.example.toml), then run `http-relay-auth secret` to generate a secret. A complete configuration looks like this:
 
 ```toml
+[web]
+max_transactions_per_namespace = 100
+
 [web.auth]
 mode = "jwt"
 secret = "replace-with-http-relay-auth-secret-output"
@@ -162,6 +166,12 @@ trust_forwarded_headers = false
 team-a = true
 team-b = true
 public-demo = false
+```
+
+`max_transactions_per_namespace` applies independently to each namespace; the default view without a namespace is another independent bucket. Only the oldest records in the bucket that exceeds its limit are evicted. It can be overridden temporarily:
+
+```bash
+WEB_MAX_TRANSACTIONS_PER_NAMESPACE=500 http-relay --config ./config.toml --web
 ```
 
 The secret must be unpadded Base64URL for at least 32 random bytes. Run `chmod 600 http-relay.toml` when embedding it; using `WEB_AUTH_JWT_SECRET` is preferable in deployments. JWT mode cannot be combined with `WEB_AUTH_KEY`.

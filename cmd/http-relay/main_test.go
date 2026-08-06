@@ -7,8 +7,10 @@ import (
 )
 
 func TestResolveWebOptionsCompatibility(t *testing.T) {
-	opts, err := resolveWebOptions(appconfig.Config{}, "legacy", false)
-	if err != nil || opts.AuthKey != "legacy" || opts.JWTAuth != nil {
+	base := appconfig.Config{}
+	base.Web.MaxTransactionsPerNamespace = 321
+	opts, err := resolveWebOptions(base, "legacy", false)
+	if err != nil || opts.AuthKey != "legacy" || opts.JWTAuth != nil || opts.MaxTransactionsPerNamespace != 321 {
 		t.Fatalf("opts=%+v err=%v", opts, err)
 	}
 	cfg := appconfig.Config{}

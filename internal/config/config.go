@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 )
 
 const (
-	EnvConfigPath = "HTTP_RELAY_CONFIG"
-	EnvJWTSecret  = "WEB_AUTH_JWT_SECRET"
+	EnvConfigPath                      = "HTTP_RELAY_CONFIG"
+	EnvJWTSecret                       = "WEB_AUTH_JWT_SECRET"
+	EnvMaxTransactionsPerNamespace     = "WEB_MAX_TRANSACTIONS_PER_NAMESPACE"
+	DefaultMaxTransactionsPerNamespace = 100
 )
 
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -36,7 +39,8 @@ type Config struct {
 }
 
 type WebConfig struct {
-	Auth AuthConfig `toml:"auth"`
+	MaxTransactionsPerNamespace int        `toml:"max_transactions_per_namespace"`
+	Auth                        AuthConfig `toml:"auth"`
 }
 
 type AuthConfig struct {
@@ -57,7 +61,7 @@ type AuthConfig struct {
 }
 
 func defaults() Config {
-	return Config{Web: WebConfig{Auth: AuthConfig{
+	return Config{Web: WebConfig{MaxTransactionsPerNamespace: DefaultMaxTransactionsPerNamespace, Auth: AuthConfig{
 		Issuer:      "http-relay",
 		Audience:    "http-relay-web",
 		TokenTTL:    Duration{30 * 24 * time.Hour},
@@ -79,6 +83,12 @@ func Load(path string) (Config, []string, error) {
 	cfg := defaults()
 	path = strings.TrimSpace(path)
 	if path == "" {
+		if err := applyWebEnvironment(&cfg); err != nil {
+			return Config{}, nil, err
+		}
+		if err := cfg.Validate(os.Getenv(EnvJWTSecret)); err != nil {
+			return Config{}, nil, err
+		}
 		return cfg, nil, nil
 	}
 
@@ -106,11 +116,27 @@ func Load(path string) (Config, []string, error) {
 		}
 	}
 
+	if err := applyWebEnvironment(&cfg); err != nil {
+		return Config{}, nil, err
+	}
 	warnings := configWarnings(f, strings.TrimSpace(cfg.Web.Auth.Secret) != "")
 	if err := cfg.Validate(os.Getenv(EnvJWTSecret)); err != nil {
 		return Config{}, warnings, err
 	}
 	return cfg, warnings, nil
+}
+
+func applyWebEnvironment(cfg *Config) error {
+	raw := strings.TrimSpace(os.Getenv(EnvMaxTransactionsPerNamespace))
+	if raw == "" {
+		return nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("%s must be a positive integer", EnvMaxTransactionsPerNamespace)
+	}
+	cfg.Web.MaxTransactionsPerNamespace = value
+	return nil
 }
 
 func nestedTable(root map[string]any, names ...string) (map[string]any, bool) {
@@ -140,6 +166,9 @@ func configWarnings(f *os.File, containsSecret bool) []string {
 }
 
 func (c *Config) Validate(envSecret string) error {
+	if c.Web.MaxTransactionsPerNamespace <= 0 {
+		return errors.New("web.max_transactions_per_namespace must be greater than zero")
+	}
 	a := &c.Web.Auth
 	a.Mode = strings.TrimSpace(strings.ToLower(a.Mode))
 	if a.Mode == "" {

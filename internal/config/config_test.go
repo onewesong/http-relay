@@ -15,11 +15,50 @@ func testSecret() string {
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
+	t.Setenv(EnvMaxTransactionsPerNamespace, "")
 	path := filepath.Join(t.TempDir(), "http-relay.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestMaxTransactionsPerNamespace(t *testing.T) {
+	path := writeConfig(t, "[web]\nmax_transactions_per_namespace = 250\n")
+	cfg, _, err := Load(path)
+	if err != nil || cfg.Web.MaxTransactionsPerNamespace != 250 {
+		t.Fatalf("max=%d err=%v", cfg.Web.MaxTransactionsPerNamespace, err)
+	}
+
+	t.Setenv(EnvMaxTransactionsPerNamespace, "75")
+	cfg, _, err = Load(path)
+	if err != nil || cfg.Web.MaxTransactionsPerNamespace != 75 {
+		t.Fatalf("environment override max=%d err=%v", cfg.Web.MaxTransactionsPerNamespace, err)
+	}
+}
+
+func TestMaxTransactionsPerNamespaceEnvironmentWithoutConfig(t *testing.T) {
+	t.Setenv(EnvMaxTransactionsPerNamespace, "42")
+	cfg, _, err := Load("")
+	if err != nil || cfg.Web.MaxTransactionsPerNamespace != 42 {
+		t.Fatalf("max=%d err=%v", cfg.Web.MaxTransactionsPerNamespace, err)
+	}
+}
+
+func TestRejectsInvalidMaxTransactionsPerNamespace(t *testing.T) {
+	for _, value := range []string{"0", "-1", "many"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(EnvMaxTransactionsPerNamespace, value)
+			if _, _, err := Load(""); err == nil || !strings.Contains(err.Error(), EnvMaxTransactionsPerNamespace) {
+				t.Fatalf("expected invalid environment error, got %v", err)
+			}
+		})
+	}
+
+	path := writeConfig(t, "[web]\nmax_transactions_per_namespace = 0\n")
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "must be greater than zero") {
+		t.Fatalf("expected invalid TOML error, got %v", err)
+	}
 }
 
 func TestLoadJWTConfig(t *testing.T) {

@@ -80,6 +80,8 @@ func main() {
 		fmt.Fprintf(out, "  HTTP_RELAY_CONFIG     TOML configuration path fallback\n")
 		fmt.Fprintf(out, "  WEB_AUTH_KEY          legacy global password for the Web UI\n")
 		fmt.Fprintf(out, "  WEB_AUTH_JWT_SECRET   JWT HMAC secret override (requires TOML mode=jwt)\n")
+		fmt.Fprintf(out, "  WEB_MAX_TRANSACTIONS_PER_NAMESPACE\n")
+		fmt.Fprintf(out, "                        retained Web transactions per namespace (default: 100)\n")
 		fmt.Fprintf(out, "  ALL_PROXY             proxy for both HTTP and HTTPS, highest priority\n")
 		fmt.Fprintf(out, "  HTTP_PROXY            upstream proxy for HTTP targets\n")
 		fmt.Fprintf(out, "  HTTPS_PROXY           upstream proxy for HTTPS targets\n")
@@ -242,7 +244,10 @@ func main() {
 }
 
 func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bool) (web.Options, error) {
-	opts := web.Options{AuthKey: legacyKey, TrustForwardedHeaders: trustForwarded}
+	opts := web.Options{
+		AuthKey: legacyKey, MaxTransactionsPerNamespace: cfg.Web.MaxTransactionsPerNamespace,
+		TrustForwardedHeaders: trustForwarded,
+	}
 	if cfg.Web.Auth.Mode != "jwt" {
 		return opts, nil
 	}

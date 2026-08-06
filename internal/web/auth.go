@@ -30,11 +30,12 @@ const (
 )
 
 type Options struct {
-	AuthKey               string
-	SessionTTL            time.Duration
-	JWTAuth               *appconfig.AuthConfig
-	Logger                *log.Logger
-	TrustForwardedHeaders bool
+	AuthKey                     string
+	SessionTTL                  time.Duration
+	MaxTransactionsPerNamespace int
+	JWTAuth                     *appconfig.AuthConfig
+	Logger                      *log.Logger
+	TrustForwardedHeaders       bool
 }
 
 type authenticator struct {

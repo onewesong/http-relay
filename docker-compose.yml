@@ -17,7 +17,7 @@ services:
       HTTP_RELAY_CONFIG: "/etc/http-relay/http-relay.toml"
       WEB_AUTH_JWT_SECRET: "${WEB_AUTH_JWT_SECRET:?set WEB_AUTH_JWT_SECRET to the output of http-relay-auth secret}"
     volumes:
-      - "./config.example.toml:/etc/http-relay/http-relay.toml:ro"
+      - "./config.toml:/etc/http-relay/http-relay.toml:ro"
       - "./examples:/etc/http-relay/examples:ro"
     ports:
       - "127.0.0.1:7080:7080"

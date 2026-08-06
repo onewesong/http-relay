@@ -1,0 +1,4 @@
+interface:
+  display_name: "编写 http-relay JS"
+  short_description: "编写、配置并验证 http-relay JavaScript 改写脚本"
+  default_prompt: "使用 $write-http-relay-js 为当前需求编写并验证 http-relay JavaScript 改写脚本。"

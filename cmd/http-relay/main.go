@@ -62,13 +62,14 @@ func main() {
 		fmt.Fprintf(out, "  %s version\n\n", name)
 
 		fmt.Fprintf(out, "Modes:\n")
-		fmt.Fprintf(out, "  regular                       target URL comes from /{absolute-url} or /{namespace}/{absolute-url} (default)\n")
+		fmt.Fprintf(out, "  regular                       target URL comes from /{absolute-url}, optionally prefixed by namespace and/or @rewrite-profile (default)\n")
 		fmt.Fprintf(out, "  reverse:<url>                 reverse proxy to an upstream URL\n\n")
 
 		fmt.Fprintf(out, "Examples:\n")
 		fmt.Fprintf(out, "  %s --mode reverse:https://api.example.com --modify-header 'User-Agent: http-relay'\n", name)
 		fmt.Fprintf(out, "  %s --add-header 'X-Debug: 1' -w\n", name)
 		fmt.Fprintf(out, "  %s --web --web-listen 127.0.0.1:7090\n\n", name)
+		fmt.Fprintf(out, "  %s --config ./config.toml # then request /team-a/@openai/https://example.com\n\n", name)
 
 		fmt.Fprintf(out, "Flags:\n")
 		flag.PrintDefaults()
@@ -151,16 +152,24 @@ func main() {
 	if err != nil {
 		logger.Fatalf("failed to load script %q: %v", *scriptPath, err)
 	}
-	if engine != nil {
-		stop, werr := engine.Watch(reloadMode, 0, func(rerr error) {
+	scriptRegistry, err := buildScriptRegistry(appCfg, engine, *scriptTimeout, reloadMode, scriptConsole)
+	if err != nil {
+		logger.Fatalf("failed to load rewrite profiles: %v", err)
+	}
+	if engine != nil || len(scriptRegistry.Profiles()) > 0 {
+		stop, werr := scriptRegistry.WatchAll(reloadMode, func(profile string, rerr error) {
+			label := "default script"
+			if profile != "" {
+				label = "rewrite profile " + profile
+			}
 			if rerr != nil {
-				logger.Printf("script reload failed (keeping previous version): %v", rerr)
+				logger.Printf("%s reload failed (keeping previous version): %v", label, rerr)
 				return
 			}
-			logger.Printf("script reloaded: %s", *scriptPath)
+			logger.Printf("%s reloaded", label)
 		})
 		if werr != nil {
-			logger.Fatalf("failed to watch script %q: %v", *scriptPath, werr)
+			logger.Fatalf("failed to watch rewrite scripts: %v", werr)
 		}
 		defer stop()
 	}
@@ -169,6 +178,13 @@ func main() {
 	if engine != nil {
 		scriptSummary = fmt.Sprintf("%s (req=%t resp=%t reload=%s timeout=%s)",
 			*scriptPath, engine.HasRequestHook(), engine.HasResponseHook(), reloadMode, *scriptTimeout)
+	}
+	if profiles := scriptRegistry.Profiles(); len(profiles) > 0 {
+		scriptSummary += fmt.Sprintf("; profiles=%d", len(profiles))
+		for _, profile := range profiles {
+			logger.Printf("rewrite profile: name=%s script=%s req=%t resp=%t reload=%s timeout=%s",
+				profile.Name, profile.Path, profile.HasRequest, profile.HasResponse, profile.Reload, profile.Timeout)
+		}
 	}
 
 	addr := strings.TrimSpace(*listen)
@@ -202,7 +218,7 @@ func main() {
 		// The TUI always captures full req+resp traffic and owns the screen.
 		dump = true
 		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
-		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine)
+		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry)
 		return
 	}
 
@@ -217,18 +233,18 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, engine, scriptSummary, meta, webOptions, logger, palette)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, scriptSummary, meta, webOptions, logger, palette)
 		return
 	}
 
 	handler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:   mode,
-		HeaderRules:  headerRules,
-		DumpRequest:  dump,
-		DumpScope:    wireScope,
-		MaskAuth:     *maskAuth,
-		Palette:      palette,
-		ScriptEngine: engine,
+		TargetMode:     mode,
+		HeaderRules:    headerRules,
+		DumpRequest:    dump,
+		DumpScope:      wireScope,
+		MaskAuth:       *maskAuth,
+		Palette:        palette,
+		ScriptRegistry: scriptRegistry,
 	})
 
 	server := &http.Server{
@@ -258,21 +274,43 @@ func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bo
 	return opts, nil
 }
 
+func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine, defaultTimeout time.Duration, defaultReload relayscript.ReloadMode, console io.Writer) (*relayscript.Registry, error) {
+	profiles := make([]relayscript.ProfileOptions, 0, len(cfg.Rewrite.Profiles))
+	for name, configured := range cfg.Rewrite.Profiles {
+		timeout := defaultTimeout
+		if configured.Timeout.Set {
+			timeout = configured.Timeout.Duration
+		}
+		reload := defaultReload
+		if configured.Reload != "" {
+			parsed, err := relayscript.ParseReloadMode(configured.Reload)
+			if err != nil {
+				return nil, fmt.Errorf("rewrite profile %q: %w", name, err)
+			}
+			reload = parsed
+		}
+		profiles = append(profiles, relayscript.ProfileOptions{
+			Name: name, Path: configured.Script, Timeout: timeout, Reload: reload, Console: console,
+		})
+	}
+	return relayscript.NewRegistry(defaultEngine, profiles)
+}
+
 // runTUI starts the relay server in the background and runs the interactive
 // TUI on the main goroutine (it owns the terminal). It returns when the user
 // quits the TUI.
-func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine) {
+func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry) {
 	header := tuiHeader(addr, mode, proxySummary, timeout)
 	prog, reporter := tui.New(header)
 
 	handler := relay.NewHandlerWithOptions(client, log.Default(), relay.HandlerOptions{
-		TargetMode:   mode,
-		HeaderRules:  headerRules,
-		DumpRequest:  true,
-		DumpScope:    wireScope,
-		MaskAuth:     maskAuth,
-		Reporter:     reporter,
-		ScriptEngine: engine,
+		TargetMode:     mode,
+		HeaderRules:    headerRules,
+		DumpRequest:    true,
+		DumpScope:      wireScope,
+		MaskAuth:       maskAuth,
+		Reporter:       reporter,
+		ScriptRegistry: scripts,
 	})
 
 	server := &http.Server{
@@ -310,18 +348,18 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, engine *relayscript.Engine, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette) {
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette) {
 	webOptions.Logger = logger
 	webHandler, reporter := web.New(meta, webOptions)
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:   mode,
-		HeaderRules:  headerRules,
-		DumpRequest:  true,
-		DumpScope:    wireScope,
-		MaskAuth:     maskAuth,
-		Reporter:     reporter,
-		ScriptEngine: engine,
+		TargetMode:     mode,
+		HeaderRules:    headerRules,
+		DumpRequest:    true,
+		DumpScope:      wireScope,
+		MaskAuth:       maskAuth,
+		Reporter:       reporter,
+		ScriptRegistry: scripts,
 	})
 
 	proxyServer := &http.Server{Addr: addr, Handler: proxyHandler, ReadHeaderTimeout: 10 * time.Second}

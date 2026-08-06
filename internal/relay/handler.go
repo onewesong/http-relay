@@ -37,7 +37,7 @@ type Handler struct {
 	dumpRequest bool
 	dumpScope   DumpScope
 	maskAuth    bool
-	engine      *script.Engine
+	scripts     *script.Registry
 	dumpSeq     atomic.Uint64
 }
 
@@ -54,6 +54,9 @@ type HandlerOptions struct {
 	// ScriptEngine, when non-nil, runs onRequest/onResponse hooks that may
 	// rewrite or short-circuit traffic. Nil disables scripting entirely.
 	ScriptEngine *script.Engine
+	// ScriptRegistry selects named path-bound rewrite profiles. When nil, a
+	// registry containing only ScriptEngine is created for compatibility.
+	ScriptRegistry *script.Registry
 }
 
 type DumpScope uint8
@@ -133,6 +136,10 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 		reporter = newLogReporter(logger, opts.Palette)
 	}
 
+	registry := opts.ScriptRegistry
+	if registry == nil {
+		registry, _ = script.NewRegistry(opts.ScriptEngine, nil)
+	}
 	return &Handler{
 		client:      client,
 		reporter:    reporter,
@@ -141,36 +148,46 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 		dumpRequest: opts.DumpRequest,
 		dumpScope:   opts.DumpScope,
 		maskAuth:    opts.MaskAuth,
-		engine:      opts.ScriptEngine,
+		scripts:     registry,
 	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.engine != nil && (h.engine.HasRequestHook() || h.engine.HasResponseHook()) {
-		h.serveScripted(w, r)
+	resolved, err := h.targetMode.Resolve(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		h.logAccess(0, "", "", r.Method, "", http.StatusBadRequest, 0, 0, err.Error())
 		return
 	}
-	h.servePlain(w, r)
+	engine := h.scripts.Default()
+	if resolved.RewriteProfile != "" {
+		var ok bool
+		engine, ok = h.scripts.Lookup(resolved.RewriteProfile)
+		if !ok {
+			writeError(w, http.StatusNotFound, "rewrite profile not found")
+			h.logAccess(0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), http.StatusNotFound, 0, 0, "rewrite profile not found")
+			return
+		}
+	}
+	if engine != nil && (engine.HasRequestHook() || engine.HasResponseHook()) {
+		h.serveScripted(w, r, resolved, engine)
+		return
+	}
+	h.servePlain(w, r, resolved)
 }
 
 // servePlain relays a request with no script hooks active. It is the original,
 // streaming-friendly path.
-func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request, resolved ResolvedTarget) {
 	start := time.Now()
 	dumpID := uint64(0)
-	resolved, err := h.targetMode.Resolve(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		h.logAccess(dumpID, "", r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
-		return
-	}
 
 	if h.dumpRequest {
 		dumpID = h.dumpSeq.Add(1)
 		if h.dumpScope.HasReq() {
 			if err := h.logIncomingRequest(dumpID, resolved.Namespace, r); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-				h.logAccess(dumpID, resolved.Namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+				h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 				return
 			}
 		}
@@ -181,7 +198,7 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 	upstreamReq, err := h.buildUpstreamRequest(r, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return
 	}
 
@@ -189,7 +206,7 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, msg := mapUpstreamError(err)
 		writeError(w, status, msg)
-		h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), status, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), status, time.Since(start), 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -199,11 +216,11 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			writeError(w, http.StatusBadGateway, "failed to read upstream response")
-			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
 			return
 		}
 		if err := h.logUpstreamResponse(dumpID, resolved.Namespace, resp, respBody); err != nil {
-			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), 0, err.Error())
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), 0, err.Error())
 		}
 
 		copyResponseHeaders(w.Header(), resp.Header)
@@ -211,7 +228,7 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		n, err := w.Write(respBody)
 		bytesWritten = int64(n)
 		if err != nil {
-			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, err.Error())
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, err.Error())
 			return
 		}
 	} else {
@@ -220,25 +237,26 @@ func (h *Handler) servePlain(w http.ResponseWriter, r *http.Request) {
 		n, copyErr := io.Copy(w, resp.Body)
 		bytesWritten = n
 		if copyErr != nil {
-			h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, copyErr.Error())
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, copyErr.Error())
 			return
 		}
 	}
 
-	h.logAccess(dumpID, resolved.Namespace, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
+	h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), resp.StatusCode, time.Since(start), bytesWritten, "")
 }
 
 // logAccess emits one access-log entry through the reporter.
-func (h *Handler) logAccess(seq uint64, namespace, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
+func (h *Handler) logAccess(seq uint64, namespace, rewriteProfile, method, target string, status int, dur time.Duration, bytes int64, errMsg string) {
 	h.reporter.Access(AccessRecord{
-		Seq:       seq,
-		Namespace: namespace,
-		Method:    method,
-		Target:    target,
-		Status:    status,
-		Duration:  dur,
-		Bytes:     bytes,
-		Err:       errMsg,
+		Seq:            seq,
+		Namespace:      namespace,
+		RewriteProfile: rewriteProfile,
+		Method:         method,
+		Target:         target,
+		Status:         status,
+		Duration:       dur,
+		Bytes:          bytes,
+		Err:            errMsg,
 	})
 }
 
@@ -333,15 +351,37 @@ func parseNamespacedTargetURL(r *http.Request) (ResolvedTarget, error) {
 	}
 
 	namespace := ""
+	profile := ""
 	if !hasHTTPPrefix(raw) {
-		prefix, targetRaw, ok := strings.Cut(raw, "/")
-		if ok && hasHTTPPrefix(targetRaw) {
-			decoded, err := url.PathUnescape(prefix)
+		first, remainder, ok := strings.Cut(raw, "/")
+		if !ok {
+			return ResolvedTarget{}, errors.New("missing target URL in path")
+		}
+		if strings.HasPrefix(first, "@") {
+			var err error
+			profile, err = parseRewriteProfileSegment(first)
+			if err != nil {
+				return ResolvedTarget{}, err
+			}
+			raw = remainder
+		} else {
+			decoded, err := url.PathUnescape(first)
 			if err != nil || !ValidNamespace(decoded) || decoded == "" {
 				return ResolvedTarget{}, errors.New("invalid namespace")
 			}
 			namespace = decoded
-			raw = targetRaw
+			raw = remainder
+			if !hasHTTPPrefix(raw) {
+				second, targetRaw, hasTarget := strings.Cut(raw, "/")
+				if !hasTarget || !strings.HasPrefix(second, "@") {
+					return ResolvedTarget{}, errors.New("invalid target URL")
+				}
+				profile, err = parseRewriteProfileSegment(second)
+				if err != nil {
+					return ResolvedTarget{}, err
+				}
+				raw = targetRaw
+			}
 		}
 	}
 
@@ -358,7 +398,18 @@ func parseNamespacedTargetURL(r *http.Request) (ResolvedTarget, error) {
 		return ResolvedTarget{}, errors.New("target URL host is required")
 	}
 
-	return ResolvedTarget{URL: target, Namespace: namespace}, nil
+	return ResolvedTarget{URL: target, Namespace: namespace, RewriteProfile: profile, OriginalPath: r.URL.EscapedPath()}, nil
+}
+
+func parseRewriteProfileSegment(segment string) (string, error) {
+	if !strings.HasPrefix(segment, "@") || strings.Contains(segment, "%") {
+		return "", errors.New("invalid rewrite profile")
+	}
+	profile := strings.TrimPrefix(segment, "@")
+	if profile == "" || !ValidNamespace(profile) {
+		return "", errors.New("invalid rewrite profile")
+	}
+	return profile, nil
 }
 
 func hasHTTPPrefix(raw string) bool {
@@ -429,24 +480,19 @@ func copyResponseHeaders(dst, src http.Header) {
 // always buffered (a hook may read or rewrite it); onRequest may rewrite the
 // method/url/host/headers/body or short-circuit with a synthesized response,
 // and onResponse runs on whatever response results (upstream or short-circuit).
-func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request, resolved ResolvedTarget, engine *script.Engine) {
 	start := time.Now()
 	dumpID := uint64(0)
 	if h.dumpRequest {
 		dumpID = h.dumpSeq.Add(1)
 	}
-	resolved, err := h.targetMode.Resolve(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		h.logAccess(dumpID, "", r.Method, "", http.StatusBadRequest, time.Since(start), 0, err.Error())
-		return
-	}
 	namespace := resolved.Namespace
+	rewriteProfile := resolved.RewriteProfile
 
 	reqBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-		h.logAccess(dumpID, namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, rewriteProfile, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(reqBody))
@@ -455,7 +501,7 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	if h.dumpRequest && h.dumpScope.HasReq() {
 		if err := h.dumpIncomingRequest(dumpID, namespace, r, reqBody); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read inbound request")
-			h.logAccess(dumpID, namespace, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+			h.logAccess(dumpID, namespace, rewriteProfile, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
 			return
 		}
 	}
@@ -469,38 +515,41 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	hostOverride := applyHeaderRulesToHeader(header, targetURL.Host, h.headerRules)
 
 	sreq := &script.Request{
-		Method: r.Method,
-		URL:    targetURL.String(),
-		Host:   hostOverride,
-		Header: header,
-		Body:   reqBody,
+		Method:         r.Method,
+		URL:            targetURL.String(),
+		Host:           hostOverride,
+		Header:         header,
+		Body:           reqBody,
+		Namespace:      resolved.Namespace,
+		RewriteProfile: resolved.RewriteProfile,
+		OriginalPath:   resolved.OriginalPath,
 	}
 
 	var shortCircuit *script.Response
-	if h.engine.HasRequestHook() {
-		sc, err := h.engine.OnRequest(sreq)
+	if engine.HasRequestHook() {
+		sc, err := engine.OnRequest(sreq)
 		if err != nil {
-			h.failHook(w, dumpID, namespace, r.Method, targetURL.String(), start, err)
+			h.failHook(w, dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), start, err)
 			return
 		}
 		newTarget, perr := parseScriptTarget(sreq.URL)
 		if perr != nil {
-			h.failHook(w, dumpID, namespace, r.Method, sreq.URL, start, perr)
+			h.failHook(w, dumpID, namespace, rewriteProfile, r.Method, sreq.URL, start, perr)
 			return
 		}
 		targetURL = newTarget
 		shortCircuit = sc
 	}
 
-	status, respHeader, respBody, statusText, ok := h.obtainResponse(w, r, dumpID, namespace, start, sreq, targetURL, shortCircuit)
+	status, respHeader, respBody, statusText, ok := h.obtainResponse(w, r, dumpID, namespace, rewriteProfile, start, sreq, targetURL, shortCircuit)
 	if !ok {
 		return
 	}
 
-	if h.engine.HasResponseHook() {
+	if engine.HasResponseHook() {
 		sresp := &script.Response{Status: status, Header: cloneHeader(respHeader), Body: respBody}
-		if err := h.engine.OnResponse(sresp, sreq); err != nil {
-			h.failHook(w, dumpID, namespace, r.Method, targetURL.String(), start, err)
+		if err := engine.OnResponse(sresp, sreq); err != nil {
+			h.failHook(w, dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), start, err)
 			return
 		}
 		status = sresp.Status
@@ -517,13 +566,13 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bytesWritten := h.writeScriptedResponse(w, r, status, respHeader, respBody)
-	h.logAccess(dumpID, namespace, r.Method, targetURL.String(), status, time.Since(start), bytesWritten, "")
+	h.logAccess(dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), status, time.Since(start), bytesWritten, "")
 }
 
 // obtainResponse returns the response to relay, either synthesized from a
 // short-circuit or fetched from upstream. It writes an error response and
 // returns ok=false if the upstream call fails.
-func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID uint64, namespace string, start time.Time, sreq *script.Request, targetURL *url.URL, shortCircuit *script.Response) (status int, header http.Header, body []byte, statusText string, ok bool) {
+func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID uint64, namespace, rewriteProfile string, start time.Time, sreq *script.Request, targetURL *url.URL, shortCircuit *script.Response) (status int, header http.Header, body []byte, statusText string, ok bool) {
 	if shortCircuit != nil {
 		status = shortCircuit.Status
 		if status == 0 {
@@ -539,7 +588,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	upstreamReq, err := buildScriptedUpstream(r.Context(), sreq, targetURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
-		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
 		return 0, nil, nil, "", false
 	}
 
@@ -547,7 +596,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	if err != nil {
 		s, msg := mapUpstreamError(err)
 		writeError(w, s, msg)
-		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), s, time.Since(start), 0, err.Error())
+		h.logAccess(dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), s, time.Since(start), 0, err.Error())
 		return 0, nil, nil, "", false
 	}
 	defer resp.Body.Close()
@@ -555,7 +604,7 @@ func (h *Handler) obtainResponse(w http.ResponseWriter, r *http.Request, dumpID 
 	b, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		writeError(w, http.StatusBadGateway, "failed to read upstream response")
-		h.logAccess(dumpID, namespace, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
+		h.logAccess(dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, readErr.Error())
 		return 0, nil, nil, "", false
 	}
 
@@ -586,9 +635,9 @@ func (h *Handler) writeScriptedResponse(w http.ResponseWriter, r *http.Request, 
 }
 
 // failHook writes a 500 for a failed script hook and records the access log.
-func (h *Handler) failHook(w http.ResponseWriter, seq uint64, namespace, method, target string, start time.Time, err error) {
+func (h *Handler) failHook(w http.ResponseWriter, seq uint64, namespace, rewriteProfile, method, target string, start time.Time, err error) {
 	writeError(w, http.StatusInternalServerError, "script hook failed: "+err.Error())
-	h.logAccess(seq, namespace, method, target, http.StatusInternalServerError, time.Since(start), 0, err.Error())
+	h.logAccess(seq, namespace, rewriteProfile, method, target, http.StatusInternalServerError, time.Since(start), 0, err.Error())
 }
 
 // dumpScriptedResponse reports a (possibly synthesized) response to the reporter.

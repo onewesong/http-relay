@@ -254,7 +254,7 @@ func TestAdminDisabledReturnsNotFound(t *testing.T) {
 func TestAdminSnapshotAndTokenIssue(t *testing.T) {
 	cfg := jwtTestConfig()
 	handler, reporter := New(Meta{}, Options{JWTAuth: cfg, Logger: logDiscard()})
-	reporter.Access(relay.AccessRecord{Seq: 1, Namespace: "recorded", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 1, Namespace: "recorded", RewriteProfile: "openai", Method: "GET", Status: 200})
 	adminCookie := loginJWT(t, handler, jwtToken(t, cfg, "", false), "/admin/")
 
 	webHandler := handler

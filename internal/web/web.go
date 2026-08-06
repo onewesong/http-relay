@@ -177,6 +177,7 @@ func (r *webReporter) Access(rec relay.AccessRecord) {
 		seq = r.store.synthID()
 	}
 	r.store.mutate(seq, rec.Namespace, func(t *Transaction) {
+		t.RewriteProfile = rec.RewriteProfile
 		t.Method = rec.Method
 		t.Target = rec.Target
 		t.Status = rec.Status

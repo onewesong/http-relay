@@ -102,6 +102,18 @@ main {
 .row .time { color: var(--dim); text-align: right; }
 .row .target { overflow: hidden; text-overflow: ellipsis; color: var(--other); }
 .row .err { color: var(--server-err); }
+.profile-badge {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 0 6px;
+  border: 1px solid #394452;
+  border-radius: 9px;
+  color: #8b9aaa;
+  background: #171d25;
+  font-size: 11px;
+  line-height: 17px;
+  vertical-align: 1px;
+}
 
 .m-GET { color: var(--get); }
 .m-POST, .m-PUT, .m-PATCH { color: var(--write); }
@@ -127,6 +139,17 @@ main {
 .conversation-empty { padding: 24px 12px; color: var(--dim); }
 
 /* ---- detail ---- */
+.route-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 11px;
+}
+.route-context .profile-badge { margin-right: 0; }
 .block { margin-bottom: 18px; }
 .block h3 {
   margin: 0 0 6px;

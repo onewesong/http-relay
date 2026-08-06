@@ -1,3 +1,13 @@
+[rewrite.profiles.openai]
+script = "./examples/rewrite.openai.js"
+timeout = "500ms"
+reload = "watch"
+
+[rewrite.profiles.mock]
+script = "./examples/rewrite.mock.js"
+# timeout and reload are optional; omitted values inherit --script-timeout and
+# --script-reload.
+
 [web]
 # Maximum retained transactions for each namespace, including the default view.
 max_transactions_per_namespace = 100

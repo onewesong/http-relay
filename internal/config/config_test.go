@@ -37,6 +37,53 @@ func TestMaxTransactionsPerNamespace(t *testing.T) {
 	}
 }
 
+func TestRewriteProfiles(t *testing.T) {
+	path := writeConfig(t, `[rewrite.profiles.openai]
+script = "./scripts/openai.js"
+timeout = "350ms"
+reload = "poll"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := cfg.Rewrite.Profiles["openai"]
+	wantPath := filepath.Join(filepath.Dir(path), "scripts", "openai.js")
+	if profile.Script != wantPath || !profile.Timeout.Set || profile.Timeout.Duration != 350*time.Millisecond || profile.Reload != "poll" {
+		t.Fatalf("profile=%+v", profile)
+	}
+}
+
+func TestRewriteProfileValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"invalid name", `[rewrite.profiles."bad/name"]
+script = "x.js"
+`, "invalid rewrite profile name"},
+		{"missing script", `[rewrite.profiles.openai]
+`, "script is required"},
+		{"zero timeout", `[rewrite.profiles.openai]
+script = "x.js"
+timeout = "0s"
+`, "timeout must be greater"},
+		{"invalid reload", `[rewrite.profiles.openai]
+script = "x.js"
+reload = "sometimes"
+`, "invalid reload"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.body)
+			if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v want=%q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestMaxTransactionsPerNamespaceEnvironmentWithoutConfig(t *testing.T) {
 	t.Setenv(EnvMaxTransactionsPerNamespace, "42")
 	cfg, _, err := Load("")

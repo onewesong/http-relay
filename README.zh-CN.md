@@ -285,6 +285,40 @@ http-relay \
   --modify-header "User-Agent: http-relay"
 ```
 
+## JavaScript 改写
+
+复杂改写可以通过 `--script ./examples/relay.example.js` 提供
+`onRequest(req)` 和 `onResponse(resp, req)` Hook。`--script` 是未指定具名
+Profile 时使用的默认脚本。请求和响应字段可原地修改；
+`req.namespace`、`req.rewriteProfile`、`req.originalPath` 是两个 Hook 都可见的
+只读路由上下文。
+
+需要按路径选择不同逻辑时，在 TOML 中配置具名 Profile。相对脚本路径以
+配置文件所在目录为基准：
+
+```toml
+[rewrite.profiles.openai]
+script = "./examples/rewrite.openai.js"
+timeout = "500ms"
+reload = "watch"
+
+[rewrite.profiles.mock]
+script = "./examples/rewrite.mock.js"
+# 省略 timeout/reload 时继承 --script-timeout/--script-reload
+```
+
+使用字面量 `@` 路径段选择 Profile：
+
+```bash
+curl "http://127.0.0.1:7080/@openai/https://example.com"
+curl "http://127.0.0.1:7080/team-a/@mock/https://example.com/healthz"
+```
+
+具名 Profile 只执行自身脚本，不会和 `--script` 组合；未知 Profile 返回
+`404`，也不能通过路径引用任意脚本文件。第一版仅在 regular 模式解析
+Profile，reverse 模式会把 `@profile` 当作普通上游路径。Profile 只选择改写
+逻辑，不提供 Relay 端口的写入认证。
+
 ## 上游代理
 
 支持标准代理环境变量：
@@ -303,7 +337,14 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 
 ## 路由规则
 
-默认 `regular` 模式支持 `/{absolute-url}`，例如：
+默认 `regular` 模式支持四种路径：
+
+- `/{absolute-url}`
+- `/{namespace}/{absolute-url}`
+- `/@{profile}/{absolute-url}`
+- `/{namespace}/@{profile}/{absolute-url}`
+
+例如：
 
 - `http://127.0.0.1:7080/https://example.com`
 - `http://127.0.0.1:7080/http://httpbin.org/post`

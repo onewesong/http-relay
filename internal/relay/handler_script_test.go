@@ -41,6 +41,27 @@ func scriptHandler(t *testing.T, e *script.Engine) http.Handler {
 	})
 }
 
+func registryHandler(t *testing.T, defaultEngine *script.Engine, profiles map[string]string) http.Handler {
+	t.Helper()
+	opts := make([]script.ProfileOptions, 0, len(profiles))
+	for name, source := range profiles {
+		path := filepath.Join(t.TempDir(), name+".js")
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write profile %s: %v", name, err)
+		}
+		opts = append(opts, script.ProfileOptions{Name: name, Path: path})
+	}
+	registry, err := script.NewRegistry(defaultEngine, opts)
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	return NewHandlerWithOptions(client, log.New(io.Discard, "", 0), HandlerOptions{
+		TargetMode:     DefaultTargetMode(),
+		ScriptRegistry: registry,
+	})
+}
+
 func TestHandler_ScriptRewriteRequestHeader(t *testing.T) {
 	t.Parallel()
 
@@ -256,5 +277,106 @@ func TestHandler_NilEngineUnchanged(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "plain" {
 		t.Fatalf("nil engine altered response: %q", string(body))
+	}
+}
+
+func TestHandler_SelectsRewriteProfileWithNamespaceContext(t *testing.T) {
+	t.Parallel()
+
+	profile := `
+		function onRequest(req) {
+			return {status: 200, body: req.namespace + "|" + req.rewriteProfile + "|" + req.originalPath};
+		}
+		function onResponse(resp, req) { resp.body = "openai:" + resp.body; }
+	`
+	relayServer := httptest.NewServer(registryHandler(t, nil, map[string]string{"openai": profile}))
+	defer relayServer.Close()
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/@openai/http://unused.example/", "openai:|openai|/@openai/http://unused.example/"},
+		{"/team-a/@openai/http://unused.example/", "openai:team-a|openai|/team-a/@openai/http://unused.example/"},
+	}
+	for _, tc := range tests {
+		resp, err := http.Get(relayServer.URL + tc.path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != tc.want {
+			t.Fatalf("GET %s: status=%d body=%q want=%q", tc.path, resp.StatusCode, body, tc.want)
+		}
+	}
+}
+
+func TestHandler_UnknownRewriteProfileDoesNotUseDefaultEngine(t *testing.T) {
+	t.Parallel()
+
+	defaultEngine := scriptEngine(t, `function onRequest(req){ return {status: 200, body: "default"}; }`)
+	relayServer := httptest.NewServer(registryHandler(t, defaultEngine, nil))
+	defer relayServer.Close()
+
+	resp, err := http.Get(relayServer.URL + "/@missing/http://unused.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound || strings.Contains(string(body), "default") {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+}
+
+func TestHandler_ProfileURLRewriteKeepsSelectedEngine(t *testing.T) {
+	t.Parallel()
+
+	upstreamB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("upstream-b"))
+	}))
+	defer upstreamB.Close()
+	upstreamA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("original upstream should not be reached")
+	}))
+	defer upstreamA.Close()
+
+	profileA := `
+		function onRequest(req) { req.url = "` + upstreamB.URL + `/"; }
+		function onResponse(resp, req) { resp.headers["X-Engine"] = "a"; }
+	`
+	profileB := `function onResponse(resp, req) { resp.headers["X-Engine"] = "b"; }`
+	relayServer := httptest.NewServer(registryHandler(t, nil, map[string]string{"a": profileA, "b": profileB}))
+	defer relayServer.Close()
+
+	resp, err := http.Get(relayServer.URL + "/@a/" + upstreamA.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("X-Engine"); got != "a" {
+		t.Fatalf("onResponse engine=%q, want a", got)
+	}
+}
+
+func TestHandler_ProfileWithoutHooksUsesPlainRelay(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("plain"))
+	}))
+	defer upstream.Close()
+	relayServer := httptest.NewServer(registryHandler(t, nil, map[string]string{"noop": `var enabled = true;`}))
+	defer relayServer.Close()
+
+	resp, err := http.Get(relayServer.URL + "/@noop/" + upstream.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "plain" {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
 	}
 }

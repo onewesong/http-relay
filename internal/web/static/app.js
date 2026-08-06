@@ -130,7 +130,13 @@ function rowFor(t) {
 
   const target = document.createElement('span');
   target.className = 'target';
-  target.textContent = t.target || firstLine(t.reqHead) || '';
+  if (t.rewriteProfile) {
+    const profile = document.createElement('span');
+    profile.className = 'profile-badge';
+    profile.textContent = '@' + t.rewriteProfile;
+    target.appendChild(profile);
+  }
+  target.appendChild(document.createTextNode(t.target || firstLine(t.reqHead) || ''));
   if (t.err) {
     const err = document.createElement('span');
     err.className = 'err';
@@ -359,15 +365,33 @@ function confidenceLabel(confidence) {
 function renderDetail(t) {
   if (!t) return;
   const frag = document.createDocumentFragment();
+  frag.appendChild(routeContext(t));
   frag.appendChild(section('request', '▶', t.reqHead, t.reqBody, t, false));
   frag.appendChild(section('response', '◀', t.respHead, t.respBody, t, true));
   if (!t.reqHead && !t.respHead && !t.reqBody && !t.respBody) {
     const e = document.createElement('div');
     e.className = 'empty';
     e.textContent = '(no captured body — request still in flight)';
-    frag.replaceChildren(e);
+    frag.appendChild(e);
   }
   detailEl.replaceChildren(frag);
+}
+
+function routeContext(t) {
+  const context = document.createElement('div');
+  context.className = 'route-context';
+
+  const namespace = document.createElement('span');
+  namespace.textContent = 'namespace=' + (t.namespace || '(default)');
+  context.appendChild(namespace);
+
+  if (t.rewriteProfile) {
+    const profile = document.createElement('span');
+    profile.className = 'profile-badge';
+    profile.textContent = '@' + t.rewriteProfile;
+    context.appendChild(profile);
+  }
+  return context;
 }
 
 function section(label, arrow, head, body, transaction, isResponse) {

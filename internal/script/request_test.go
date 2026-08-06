@@ -181,3 +181,45 @@ func TestOnRequest_NoRequestHookIsNoop(t *testing.T) {
 		t.Fatalf("expected nil short-circuit, got %#v", resp)
 	}
 }
+
+func TestOnRequest_ReadOnlyRouteContext(t *testing.T) {
+	t.Parallel()
+
+	req := &Request{
+		Method:         "GET",
+		URL:            "https://example.com/",
+		Header:         http.Header{},
+		Namespace:      "team-a",
+		RewriteProfile: "openai",
+		OriginalPath:   "/team-a/@openai/https://example.com/",
+	}
+	src := `function onRequest(req) {
+		req.headers["X-Context"] = req.namespace + "|" + req.rewriteProfile + "|" + req.originalPath;
+		var descriptor = Object.getOwnPropertyDescriptor(req, "namespace");
+		req.headers["X-Read-Only"] = String(!descriptor.writable && !descriptor.configurable);
+	}`
+
+	got, _ := runOnRequest(t, src, req)
+	if want := "team-a|openai|/team-a/@openai/https://example.com/"; got.Header.Get("X-Context") != want {
+		t.Fatalf("route context = %q, want %q", got.Header.Get("X-Context"), want)
+	}
+	if got.Header.Get("X-Read-Only") != "true" {
+		t.Fatalf("namespace property is not read-only: %q", got.Header.Get("X-Read-Only"))
+	}
+	if got.Namespace != "team-a" || got.RewriteProfile != "openai" || got.OriginalPath != "/team-a/@openai/https://example.com/" {
+		t.Fatalf("read-only route context was mutated: %+v", got)
+	}
+}
+
+func TestOnRequest_RejectsRouteContextMutation(t *testing.T) {
+	t.Parallel()
+
+	req := &Request{Header: http.Header{}, Namespace: "team-a"}
+	e := mustEngine(t, `function onRequest(req) { req.namespace = "changed"; }`)
+	if _, err := e.OnRequest(req); err == nil {
+		t.Fatal("expected assignment to read-only namespace to fail")
+	}
+	if req.Namespace != "team-a" {
+		t.Fatalf("namespace changed to %q", req.Namespace)
+	}
+}

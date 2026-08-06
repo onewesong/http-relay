@@ -346,6 +346,37 @@ Hook object model (mutate in place to take effect):
 - `onRequest` may `return { status, headers, body }` to short-circuit. `onResponse`
   still runs on the synthesized response, so it can post-process mocks too.
 - `console.log` / `info` / `warn` / `error` / `debug` write to stderr (silenced under `--tui`).
+- `req.namespace`, `req.rewriteProfile`, and `req.originalPath` are read-only
+  route context strings. They are identical in `onRequest` and `onResponse`.
+
+Named rewrite profiles can bind different scripts to different request paths
+without changing namespace grouping. Configure them in TOML (relative script
+paths are resolved from the configuration file directory):
+
+```toml
+[rewrite.profiles.openai]
+script = "./examples/rewrite.openai.js"
+timeout = "500ms"
+reload = "watch"
+
+[rewrite.profiles.mock]
+script = "./examples/rewrite.mock.js"
+# timeout/reload omitted: inherit --script-timeout/--script-reload
+```
+
+Then select a profile with a literal `@` path segment:
+
+```bash
+curl "http://127.0.0.1:7080/@openai/https://example.com"
+curl "http://127.0.0.1:7080/team-a/@mock/https://example.com/healthz"
+```
+
+`--script` remains the default script for requests without `@profile`. A named
+profile runs alone and is never combined with that default. Unknown profiles
+return `404`; they cannot reference arbitrary file paths. Profile selection is
+available only in regular mode in this version—reverse mode forwards `@profile`
+as an ordinary upstream path segment. Profiles select rewrite behavior only;
+they do not authenticate writes to the Relay port.
 
 Behavior notes:
 
@@ -379,7 +410,14 @@ HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 
 ## Route Rule
 
-Default `regular` mode supports `/{absolute-url}`, for example:
+Default `regular` mode supports these four route shapes:
+
+- `/{absolute-url}`
+- `/{namespace}/{absolute-url}`
+- `/@{profile}/{absolute-url}`
+- `/{namespace}/@{profile}/{absolute-url}`
+
+For example:
 
 - `http://127.0.0.1:7080/https://example.com`
 - `http://127.0.0.1:7080/http://httpbin.org/post`

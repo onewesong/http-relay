@@ -36,7 +36,14 @@ func newRequestObject(rt *goja.Runtime, req *Request) *goja.Object {
 	_ = obj.Set("host", req.Host)
 	_ = obj.Set("headers", headersToJS(rt, req.Header))
 	_ = obj.Set("body", string(req.Body))
+	defineReadOnlyString(obj, "namespace", rt.ToValue(req.Namespace))
+	defineReadOnlyString(obj, "rewriteProfile", rt.ToValue(req.RewriteProfile))
+	defineReadOnlyString(obj, "originalPath", rt.ToValue(req.OriginalPath))
 	return obj
+}
+
+func defineReadOnlyString(obj *goja.Object, name string, value goja.Value) {
+	_ = obj.DefineDataProperty(name, value, goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // readRequestObject copies mutations from the JS request object back into req.

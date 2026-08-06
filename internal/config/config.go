@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,8 +35,34 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type OptionalDuration struct {
+	time.Duration
+	Set bool
+}
+
+func (d *OptionalDuration) UnmarshalText(text []byte) error {
+	v, err := time.ParseDuration(string(text))
+	if err != nil {
+		return err
+	}
+	d.Duration = v
+	d.Set = true
+	return nil
+}
+
 type Config struct {
-	Web WebConfig `toml:"web"`
+	Web     WebConfig     `toml:"web"`
+	Rewrite RewriteConfig `toml:"rewrite"`
+}
+
+type RewriteConfig struct {
+	Profiles map[string]RewriteProfile `toml:"profiles"`
+}
+
+type RewriteProfile struct {
+	Script  string           `toml:"script"`
+	Timeout OptionalDuration `toml:"timeout"`
+	Reload  string           `toml:"reload"`
 }
 
 type WebConfig struct {
@@ -61,7 +88,7 @@ type AuthConfig struct {
 }
 
 func defaults() Config {
-	return Config{Web: WebConfig{MaxTransactionsPerNamespace: DefaultMaxTransactionsPerNamespace, Auth: AuthConfig{
+	return Config{Rewrite: RewriteConfig{Profiles: make(map[string]RewriteProfile)}, Web: WebConfig{MaxTransactionsPerNamespace: DefaultMaxTransactionsPerNamespace, Auth: AuthConfig{
 		Issuer:      "http-relay",
 		Audience:    "http-relay-web",
 		TokenTTL:    Duration{30 * 24 * time.Hour},
@@ -115,6 +142,7 @@ func Load(path string) (Config, []string, error) {
 			return Config{}, nil, errors.New("web.auth.mode must not be empty when configured")
 		}
 	}
+	resolveRewritePaths(&cfg, filepath.Dir(path))
 
 	if err := applyWebEnvironment(&cfg); err != nil {
 		return Config{}, nil, err
@@ -124,6 +152,16 @@ func Load(path string) (Config, []string, error) {
 		return Config{}, warnings, err
 	}
 	return cfg, warnings, nil
+}
+
+func resolveRewritePaths(cfg *Config, configDir string) {
+	for name, profile := range cfg.Rewrite.Profiles {
+		profile.Script = strings.TrimSpace(profile.Script)
+		if profile.Script != "" && !filepath.IsAbs(profile.Script) {
+			profile.Script = filepath.Clean(filepath.Join(configDir, profile.Script))
+		}
+		cfg.Rewrite.Profiles[name] = profile
+	}
 }
 
 func applyWebEnvironment(cfg *Config) error {
@@ -168,6 +206,24 @@ func configWarnings(f *os.File, containsSecret bool) []string {
 func (c *Config) Validate(envSecret string) error {
 	if c.Web.MaxTransactionsPerNamespace <= 0 {
 		return errors.New("web.max_transactions_per_namespace must be greater than zero")
+	}
+	for name, profile := range c.Rewrite.Profiles {
+		if !ValidNamespace(name) {
+			return fmt.Errorf("invalid rewrite profile name %q", name)
+		}
+		if strings.TrimSpace(profile.Script) == "" {
+			return fmt.Errorf("rewrite profile %q script is required", name)
+		}
+		if profile.Timeout.Set && profile.Timeout.Duration <= 0 {
+			return fmt.Errorf("rewrite profile %q timeout must be greater than zero", name)
+		}
+		profile.Reload = strings.ToLower(strings.TrimSpace(profile.Reload))
+		switch profile.Reload {
+		case "", "watch", "poll", "off":
+		default:
+			return fmt.Errorf("rewrite profile %q has invalid reload %q", name, profile.Reload)
+		}
+		c.Rewrite.Profiles[name] = profile
 	}
 	a := &c.Web.Auth
 	a.Mode = strings.TrimSpace(strings.ToLower(a.Mode))

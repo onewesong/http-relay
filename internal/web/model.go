@@ -57,15 +57,16 @@ func newBody(raw []byte) *Body {
 // Transaction accumulates everything known about one relayed request, keyed by
 // seq. It mirrors the TUI's txn but is JSON-serializable for the browser.
 type Transaction struct {
-	Seq        uint64    `json:"seq"`
-	Namespace  string    `json:"namespace,omitempty"`
-	At         time.Time `json:"at"`
-	Method     string    `json:"method"`
-	Target     string    `json:"target"`
-	Status     int       `json:"status"`
-	DurationMs int64     `json:"durationMs"`
-	Bytes      int64     `json:"bytes"`
-	Err        string    `json:"err,omitempty"`
+	Seq            uint64    `json:"seq"`
+	Namespace      string    `json:"namespace,omitempty"`
+	RewriteProfile string    `json:"rewriteProfile,omitempty"`
+	At             time.Time `json:"at"`
+	Method         string    `json:"method"`
+	Target         string    `json:"target"`
+	Status         int       `json:"status"`
+	DurationMs     int64     `json:"durationMs"`
+	Bytes          int64     `json:"bytes"`
+	Err            string    `json:"err,omitempty"`
 
 	ReqHead  string `json:"reqHead,omitempty"`
 	ReqBody  *Body  `json:"reqBody,omitempty"`

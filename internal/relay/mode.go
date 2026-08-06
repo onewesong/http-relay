@@ -24,8 +24,10 @@ type TargetMode struct {
 // ResolvedTarget is the upstream URL together with the optional namespace used
 // to group captured traffic. Namespace never becomes part of the upstream URL.
 type ResolvedTarget struct {
-	URL       *url.URL
-	Namespace string
+	URL            *url.URL
+	Namespace      string
+	RewriteProfile string
+	OriginalPath   string
 }
 
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -96,7 +98,7 @@ func (m TargetMode) Resolve(r *http.Request) (ResolvedTarget, error) {
 		if m.reverseBase == nil {
 			return ResolvedTarget{}, errors.New("reverse mode is missing upstream URL")
 		}
-		return ResolvedTarget{URL: buildReverseTargetURL(m.reverseBase, r)}, nil
+		return ResolvedTarget{URL: buildReverseTargetURL(m.reverseBase, r), OriginalPath: r.URL.EscapedPath()}, nil
 	default:
 		return parseNamespacedTargetURL(r)
 	}

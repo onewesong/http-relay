@@ -102,6 +102,24 @@ func TestOnResponse_SeesRequestContext(t *testing.T) {
 	}
 }
 
+func TestOnResponse_SeesRouteContext(t *testing.T) {
+	t.Parallel()
+
+	req := &Request{
+		Header:         http.Header{},
+		Namespace:      "team-a",
+		RewriteProfile: "openai",
+		OriginalPath:   "/team-a/@openai/https://example.com/",
+	}
+	src := `function onResponse(resp, req) {
+		resp.headers["X-Context"] = req.namespace + "|" + req.rewriteProfile + "|" + req.originalPath;
+	}`
+	got := runOnResponse(t, src, &Response{Status: 200, Header: http.Header{}}, req)
+	if want := "team-a|openai|/team-a/@openai/https://example.com/"; got.Header.Get("X-Context") != want {
+		t.Fatalf("route context = %q, want %q", got.Header.Get("X-Context"), want)
+	}
+}
+
 func TestOnResponse_ConditionalByContentType(t *testing.T) {
 	t.Parallel()
 

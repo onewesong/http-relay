@@ -50,11 +50,14 @@ type Options struct {
 
 // Request is the mutable view of an inbound request handed to onRequest.
 type Request struct {
-	Method string
-	URL    string
-	Host   string
-	Header http.Header
-	Body   []byte
+	Method         string
+	URL            string
+	Host           string
+	Header         http.Header
+	Body           []byte
+	Namespace      string
+	RewriteProfile string
+	OriginalPath   string
 }
 
 // Response is the mutable view of a response handed to onResponse, and the

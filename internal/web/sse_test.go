@@ -21,7 +21,7 @@ func TestEventsStreamsMetaThenTxn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/namespace/team-a/events", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestEventsStreamsMetaThenTxn(t *testing.T) {
 	}
 
 	// After subscription exists (meta received), a pushed transaction streams in.
-	reporter.Access(relay.AccessRecord{Seq: 7, Method: "GET", Target: "https://h/x", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 7, Namespace: "team-a", RewriteProfile: "openai", Method: "GET", Target: "https://h/x", Status: 200})
 
 	var ev event
 	if err := json.Unmarshal([]byte(readData()), &ev); err != nil {
@@ -66,12 +66,15 @@ func TestEventsStreamsMetaThenTxn(t *testing.T) {
 	if ev.Type != "txn" || ev.Txn == nil || ev.Txn.Seq != 7 || ev.Txn.Method != "GET" || !ev.Txn.Done {
 		t.Fatalf("expected txn event for seq 7, got %+v", ev)
 	}
+	if ev.Txn.Namespace != "team-a" || ev.Txn.RewriteProfile != "openai" {
+		t.Fatalf("route metadata missing from SSE: %+v", ev.Txn)
+	}
 }
 
 func TestTransactionsAPI(t *testing.T) {
 	handler, reporter := New(Meta{})
 	reporter.RequestDump(3, "", "GET / HTTP/1.1\r\n", []byte("hi"), "", "")
-	reporter.Access(relay.AccessRecord{Seq: 3, Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 3, RewriteProfile: "mock", Method: "GET", Status: 200})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/transactions", nil)
 	rec := httptest.NewRecorder()
@@ -87,12 +90,15 @@ func TestTransactionsAPI(t *testing.T) {
 	if len(got) != 1 || got[0].Seq != 3 || got[0].ReqBody == nil || got[0].ReqBody.Text != "hi" {
 		t.Fatalf("unexpected api result: %+v", got)
 	}
+	if got[0].RewriteProfile != "mock" {
+		t.Fatalf("rewrite profile missing from API: %+v", got[0])
+	}
 }
 
 func TestNamespacedTransactionsAPIAndPage(t *testing.T) {
 	handler, reporter := New(Meta{})
 	reporter.RequestDump(1, "team-a", "GET / HTTP/1.1\r\n", nil, "", "")
-	reporter.Access(relay.AccessRecord{Seq: 1, Namespace: "team-a", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 1, Namespace: "team-a", RewriteProfile: "openai", Method: "GET", Status: 200})
 	reporter.Access(relay.AccessRecord{Seq: 2, Namespace: "team-b", Method: "POST", Status: 201})
 
 	page := httptest.NewRecorder()
@@ -115,7 +121,7 @@ func TestNamespacedTransactionsAPIAndPage(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Seq != 1 || got[0].Namespace != "team-a" {
+	if len(got) != 1 || got[0].Seq != 1 || got[0].Namespace != "team-a" || got[0].RewriteProfile != "openai" {
 		t.Fatalf("unexpected namespace result: %+v", got)
 	}
 
@@ -162,6 +168,31 @@ func TestDefaultNamedNamespaceIsDistinctFromRoot(t *testing.T) {
 		var got []Transaction
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 1 || got[0].Seq != wantSeq {
 			t.Fatalf("GET %s got=%+v err=%v", path, got, err)
+		}
+	}
+}
+
+func TestRewriteProfilesDoNotPartitionNamespaceStore(t *testing.T) {
+	t.Parallel()
+
+	handler, reporter := New(Meta{})
+	reporter.Access(relay.AccessRecord{Seq: 1, RewriteProfile: "openai", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 2, RewriteProfile: "mock", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 3, Namespace: "team-a", RewriteProfile: "openai", Method: "GET", Status: 200})
+	reporter.Access(relay.AccessRecord{Seq: 4, Namespace: "team-a", RewriteProfile: "mock", Method: "GET", Status: 200})
+
+	for path, wantSeqs := range map[string][]uint64{
+		"/api/transactions":                  {2, 1},
+		"/namespace/team-a/api/transactions": {4, 3},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		var got []Transaction
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		if len(got) != 2 || got[0].Seq != wantSeqs[0] || got[1].Seq != wantSeqs[1] {
+			t.Fatalf("GET %s got=%+v", path, got)
 		}
 	}
 }

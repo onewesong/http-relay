@@ -9,14 +9,15 @@ import (
 
 // AccessRecord is one access-log entry produced per relayed request.
 type AccessRecord struct {
-	Seq       uint64
-	Namespace string
-	Method    string
-	Target    string
-	Status    int
-	Duration  time.Duration
-	Bytes     int64
-	Err       string
+	Seq            uint64
+	Namespace      string
+	RewriteProfile string
+	Method         string
+	Target         string
+	Status         int
+	Duration       time.Duration
+	Bytes          int64
+	Err            string
 }
 
 // Reporter consumes the structured output of a relayed request. The handler
@@ -82,8 +83,15 @@ func (r *logReporter) ResponseDump(seq uint64, namespace, head string, body []by
 func (r *logReporter) Access(rec AccessRecord) {
 	p := r.palette
 	if !p.Enabled() {
-		r.logger.Printf("method=%s target=%q status=%d duration_ms=%d bytes=%d err=%q",
-			rec.Method, rec.Target, rec.Status, rec.Duration.Milliseconds(), rec.Bytes, rec.Err)
+		routeMeta := ""
+		if rec.Namespace != "" {
+			routeMeta += fmt.Sprintf(" namespace=%q", rec.Namespace)
+		}
+		if rec.RewriteProfile != "" {
+			routeMeta += fmt.Sprintf(" rewrite_profile=%q", rec.RewriteProfile)
+		}
+		r.logger.Printf("method=%s%s target=%q status=%d duration_ms=%d bytes=%d err=%q",
+			rec.Method, routeMeta, rec.Target, rec.Status, rec.Duration.Milliseconds(), rec.Bytes, rec.Err)
 		return
 	}
 
@@ -103,6 +111,10 @@ func (r *logReporter) Access(rec AccessRecord) {
 	if rec.Target != "" {
 		b.WriteByte(' ')
 		b.WriteString(p.URL(rec.Target))
+	}
+	if rec.RewriteProfile != "" {
+		b.WriteByte(' ')
+		b.WriteString(p.Dim("@" + rec.RewriteProfile))
 	}
 	if rec.Err != "" {
 		b.WriteString("  ")

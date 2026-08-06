@@ -11,34 +11,34 @@
 <body>
   <div class="admin-shell">
     <header class="admin-head">
-      <h1>http-relay 管理</h1>
-      <span id="status" class="conn conn-off">offline</span>
+      <div class="admin-title"><span class="brand-name">http-relay</span><span class="title-separator">/</span><h1>管理控制台</h1></div>
+      <span id="status" class="conn conn-off">离线</span>
       <span class="spacer"></span>
-      <a href="/">默认视图</a>
-      <form method="post" action="/admin/logout"><button type="submit">退出</button></form>
+      <a class="nav-link" href="/">默认视图</a>
+      <form method="post" action="/admin/logout"><button class="button-secondary" type="submit">退出</button></form>
     </header>
     <main class="admin-grid">
       <section class="panel">
-        <h2>Namespaces</h2>
-        <table>
-          <thead><tr><th>Namespace</th><th>策略</th><th>记录</th><th>订阅</th><th>最后记录</th></tr></thead>
+        <div class="panel-heading"><div><h2>命名空间</h2><p>当前记录与实时订阅状态</p></div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>命名空间</th><th>访问策略</th><th>记录</th><th>订阅</th><th>最后记录</th></tr></thead>
           <tbody id="namespaces"></tbody>
-        </table>
+        </table></div>
       </section>
       <section class="panel">
-        <h2>创建访问 JWT</h2>
+        <div class="panel-heading"><div><h2>创建访问 JWT</h2><p>签发仅限单个命名空间的访问凭据</p></div></div>
         <form id="issue-form">
-          <label for="namespace">Namespace</label>
+          <label for="namespace">命名空间</label>
           <input id="namespace" name="namespace" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}">
           <label for="ttl">有效期</label>
           <input id="ttl" name="ttl" value="720h">
           <label id="permanent-option" class="check" hidden><input id="permanent" name="permanent" type="checkbox">永久有效</label>
-          <button type="submit">创建 JWT</button>
+          <button class="button-primary" type="submit">创建 JWT</button>
         </form>
         <p id="issue-message"></p>
         <div id="token-result" class="token-result" hidden>
           <textarea id="token" readonly autocomplete="off"></textarea>
-          <div class="token-actions"><button id="copy" type="button">复制</button><button id="discard" type="button">清除</button></div>
+          <div class="token-actions"><button class="button-primary" id="copy" type="button">复制</button><button class="button-secondary" id="discard" type="button">清除</button></div>
         </div>
       </section>
     </main>

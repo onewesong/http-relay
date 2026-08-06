@@ -43,12 +43,12 @@ type issueBucket struct {
 }
 
 type namespaceStatus struct {
-	Namespace   string    `json:"namespace"`
-	Protected   bool      `json:"protected"`
-	Policy      string    `json:"policy"`
-	Records     int       `json:"records"`
-	LastAt      time.Time `json:"lastAt,omitempty"`
-	Subscribers int       `json:"subscribers"`
+	Namespace   string     `json:"namespace"`
+	Protected   bool       `json:"protected"`
+	Policy      string     `json:"policy"`
+	Records     int        `json:"records"`
+	LastAt      *time.Time `json:"lastAt,omitempty"`
+	Subscribers int        `json:"subscribers"`
 }
 
 type adminState struct {
@@ -132,9 +132,14 @@ func (a *adminServer) snapshot() []namespaceStatus {
 			policy = "explicit"
 			protected = value
 		}
+		var lastAt *time.Time
+		if !metric.LastAt.IsZero() {
+			value := metric.LastAt
+			lastAt = &value
+		}
 		out = append(out, namespaceStatus{
 			Namespace: metric.Namespace, Protected: protected, Policy: policy,
-			Records: metric.Records, LastAt: metric.LastAt, Subscribers: metric.Subscribers,
+			Records: metric.Records, LastAt: lastAt, Subscribers: metric.Subscribers,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

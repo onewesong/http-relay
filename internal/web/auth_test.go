@@ -19,6 +19,23 @@ func TestWebAuthDisabledKeepsUIPublic(t *testing.T) {
 	}
 }
 
+func TestLoginUsesPasswordInput(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := New(Meta{}, Options{AuthKey: "secret"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`type="password"`, `name="key"`, `autocomplete="current-password"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("login page does not contain %s: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `<textarea id="key"`) {
+		t.Fatalf("login page still uses a textarea: %s", body)
+	}
+}
+
 func TestWebAuthProtectsUIAndAllowsLoggedInSession(t *testing.T) {
 	handler, _ := New(Meta{}, Options{AuthKey: "correct horse battery staple"})
 

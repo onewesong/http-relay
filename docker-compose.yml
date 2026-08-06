@@ -1,0 +1,24 @@
+services:
+  http-relay:
+    build:
+      context: .
+      args:
+        VERSION: "${HTTP_RELAY_VERSION:-dev}"
+    image: "http-relay:${HTTP_RELAY_VERSION:-dev}"
+    init: true
+    restart: unless-stopped
+    command:
+      - "--listen"
+      - "0.0.0.0:7080"
+      - "--web"
+      - "--web-listen"
+      - "0.0.0.0:7090"
+    environment:
+      HTTP_RELAY_CONFIG: "/etc/http-relay/http-relay.toml"
+      WEB_AUTH_JWT_SECRET: "${WEB_AUTH_JWT_SECRET:?set WEB_AUTH_JWT_SECRET to the output of http-relay-auth secret}"
+    volumes:
+      - "./config.example.toml:/etc/http-relay/http-relay.toml:ro"
+      - "./examples:/etc/http-relay/examples:ro"
+    ports:
+      - "127.0.0.1:7080:7080"
+      - "127.0.0.1:7090:7090"

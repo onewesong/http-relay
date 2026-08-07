@@ -255,7 +255,7 @@ http-relay -w -mask-auth
 ```
 
 Masked request headers:
-`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Auth-Token`.
+`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-Relay-Proxy`.
 
 Use `WIRE_SCOPE` (effective only when `-w` is enabled):
 
@@ -406,6 +406,28 @@ Examples:
 HTTPS_PROXY=http://127.0.0.1:7890 http-relay
 ALL_PROXY=socks5://127.0.0.1:1080 http-relay
 HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
+```
+
+### Per-request proxy
+
+Send the `X-Relay-Proxy` header to choose the upstream proxy for a single
+request, overriding the environment configuration. This lets one relay instance
+route different requests through different proxies (for example, rotating
+providers). The header is consumed by the relay and is never forwarded to the
+target.
+
+- Value is a proxy URL: `http`, `https`, `socks5`, or `socks5h`.
+- The special value `direct` forces a direct connection (no proxy).
+- When the header is absent, the environment proxy configuration applies.
+
+```bash
+# via this proxy, just for this request
+curl -H 'X-Relay-Proxy: http://user:pass@proxy.example:3128' \
+  http://127.0.0.1:8080/https://api.ipify.org?format=json
+
+# force a direct connection, ignoring env proxy
+curl -H 'X-Relay-Proxy: direct' \
+  http://127.0.0.1:8080/https://api.ipify.org?format=json
 ```
 
 ## Route Rule

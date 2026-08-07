@@ -304,7 +304,7 @@ func maskAuthHeaders(h http.Header) {
 		h[key] = masked
 	}
 
-	for _, key := range []string{"Cookie", "X-Api-Key", "X-Auth-Token"} {
+	for _, key := range []string{"Cookie", "X-Api-Key", "X-Auth-Token", ProxyOverrideHeader} {
 		if h.Get(key) != "" {
 			h.Set(key, "<redacted>")
 		}

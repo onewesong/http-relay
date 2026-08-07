@@ -15,6 +15,13 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// ProxyOverrideHeader lets a client pick the upstream proxy per request,
+// overriding the environment-configured selection. Its value is a proxy URL
+// (http, https, socks5, or socks5h). The special value "direct" forces a direct
+// connection with no proxy. The header is consumed by the relay and is never
+// forwarded to the target.
+const ProxyOverrideHeader = "X-Relay-Proxy"
+
 type RelayTransport struct {
 	selector     func(*url.URL) (*url.URL, error)
 	direct       *http.Transport
@@ -44,7 +51,7 @@ func NewTransportFromEnv() (*RelayTransport, string, error) {
 }
 
 func (t *RelayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	proxyURL, err := t.selector(req.URL)
+	proxyURL, err := t.resolveProxy(req)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +73,37 @@ func (t *RelayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme %q", proxyURL.Scheme)
 	}
+}
+
+// resolveProxy decides the upstream proxy for req. A per-request
+// ProxyOverrideHeader takes precedence over the environment-configured
+// selector; the header is stripped so it never reaches the target. When the
+// header is absent the environment selector (HTTP(S)_PROXY / ALL_PROXY /
+// NO_PROXY) applies as before.
+func (t *RelayTransport) resolveProxy(req *http.Request) (*url.URL, error) {
+	override, ok := req.Header[ProxyOverrideHeader]
+	if !ok {
+		return t.selector(req.URL)
+	}
+
+	req.Header.Del(ProxyOverrideHeader)
+
+	raw := ""
+	if len(override) > 0 {
+		raw = strings.TrimSpace(override[0])
+	}
+	if raw == "" || strings.EqualFold(raw, "direct") {
+		return nil, nil
+	}
+
+	proxyURL, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s header: %w", ProxyOverrideHeader, err)
+	}
+	if proxyURL.Scheme == "" || proxyURL.Host == "" {
+		return nil, fmt.Errorf("invalid %s header: proxy URL must include scheme and host", ProxyOverrideHeader)
+	}
+	return proxyURL, nil
 }
 
 func (t *RelayTransport) getOrCreateHTTPProxyTransport(proxyURL *url.URL) *http.Transport {

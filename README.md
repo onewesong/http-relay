@@ -302,7 +302,7 @@ exports one or both hook functions. They run inside an embedded ECMAScript
 engine ([goja](https://github.com/dop251/goja)) — no external runtime needed.
 
 ```bash
-http-relay --script ./examples/relay.example.js
+http-relay --script ./plugins/examples/relay.example.js
 ```
 
 ```js
@@ -355,12 +355,13 @@ paths are resolved from the configuration file directory):
 
 ```toml
 [rewrite.profiles.openai]
-script = "./examples/rewrite.openai.js"
+script = "builtin:rewrite.openai.js"
 timeout = "500ms"
-reload = "watch"
+# Built-in scripts are embedded in the binary and cannot be hot-reloaded.
+reload = "off"
 
 [rewrite.profiles.mock]
-script = "./examples/rewrite.mock.js"
+script = "./plugins/examples/rewrite.mock.js"
 # timeout/reload omitted: inherit --script-timeout/--script-reload
 ```
 
@@ -390,7 +391,12 @@ Behavior notes:
   serving traffic.
 - Scripting works in all modes, including `--tui` and `--web`.
 
-See [examples/relay.example.js](examples/relay.example.js) for a fuller example.
+`builtin:<file-name>` selects a script embedded from `plugins/built-in`, for
+example `builtin:rewrite.openai.js`. Embedded scripts cannot be hot-reloaded,
+and may also be used as the default script with
+`--script builtin:rewrite.openai.js`.
+
+See [plugins/examples/relay.example.js](plugins/examples/relay.example.js) for a fuller example.
 
 ## Upstream Proxy
 

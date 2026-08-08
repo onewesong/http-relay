@@ -157,7 +157,7 @@ func Load(path string) (Config, []string, error) {
 func resolveRewritePaths(cfg *Config, configDir string) {
 	for name, profile := range cfg.Rewrite.Profiles {
 		profile.Script = strings.TrimSpace(profile.Script)
-		if profile.Script != "" && !filepath.IsAbs(profile.Script) {
+		if profile.Script != "" && !filepath.IsAbs(profile.Script) && !strings.HasPrefix(profile.Script, "builtin:") {
 			profile.Script = filepath.Clean(filepath.Join(configDir, profile.Script))
 		}
 		cfg.Rewrite.Profiles[name] = profile

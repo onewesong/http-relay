@@ -1,8 +1,8 @@
 // http-relay 自定义改写脚本示例
 //
 // 用法:
-//   http-relay --script ./examples/relay.example.js
-//   http-relay --script ./examples/relay.example.js --script-reload watch   // 改文件即时生效
+//   http-relay --script ./plugins/examples/relay.example.js
+//   http-relay --script ./plugins/examples/relay.example.js --script-reload watch   // 改文件即时生效
 //
 // 脚本可选地导出两个钩子函数（都可以省略）:
 //   onRequest(req)        改写发往上游的请求；返回对象可短路（不打上游，直接回客户端）

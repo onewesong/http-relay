@@ -39,8 +39,12 @@ const DefaultTimeout = 200 * time.Millisecond
 
 // Options configures a script Engine.
 type Options struct {
-	// Path is the script file to compile. An empty Path disables scripting.
+	// Path is the script file to compile, or a diagnostic label when Source is
+	// set. Path and Source both empty disables scripting.
 	Path string
+	// Source is an optional in-memory script. When set, Path is used only as a
+	// diagnostic label and the script cannot be watched for file changes.
+	Source string
 	// Timeout bounds a single hook invocation. Zero uses DefaultTimeout.
 	Timeout time.Duration
 	// Console receives output from console.log/info/warn/error/debug calls in
@@ -87,6 +91,7 @@ type pooledRuntime struct {
 // Engine is a compiled script ready to run hooks.
 type Engine struct {
 	path    string
+	source  string
 	timeout time.Duration
 	console io.Writer
 	current atomic.Pointer[scriptVersion]
@@ -98,7 +103,7 @@ type Engine struct {
 // (nil, nil) so callers can treat "no script" as a disabled feature. A missing
 // file, a syntax error, or a non-function hook export is a fatal error.
 func New(opts Options) (*Engine, error) {
-	if opts.Path == "" {
+	if opts.Path == "" && opts.Source == "" {
 		return nil, nil
 	}
 
@@ -112,7 +117,10 @@ func New(opts Options) (*Engine, error) {
 		console = io.Discard
 	}
 
-	e := &Engine{path: opts.Path, timeout: timeout, console: console}
+	if opts.Path == "" {
+		opts.Path = "in-memory script"
+	}
+	e := &Engine{path: opts.Path, source: opts.Source, timeout: timeout, console: console}
 	e.pool.New = func() any { return &pooledRuntime{} }
 
 	ver, err := e.compile()
@@ -126,9 +134,13 @@ func New(opts Options) (*Engine, error) {
 // compile reads and compiles the script at e.path into a new version, assigning
 // it the next generation number. It validates that hook exports are callable.
 func (e *Engine) compile() (*scriptVersion, error) {
-	src, err := os.ReadFile(e.path)
-	if err != nil {
-		return nil, fmt.Errorf("read script %q: %w", e.path, err)
+	src := []byte(e.source)
+	if e.source == "" {
+		var err error
+		src, err = os.ReadFile(e.path)
+		if err != nil {
+			return nil, fmt.Errorf("read script %q: %w", e.path, err)
+		}
 	}
 
 	program, err := goja.Compile(e.path, string(src), true)

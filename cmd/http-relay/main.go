@@ -16,6 +16,7 @@ import (
 	relayscript "github.com/onewesong/http-relay/internal/script"
 	"github.com/onewesong/http-relay/internal/tui"
 	"github.com/onewesong/http-relay/internal/web"
+	builtinplugins "github.com/onewesong/http-relay/plugins"
 )
 
 var version = "dev"
@@ -148,16 +149,26 @@ func main() {
 
 	// A script that fails to compile at startup is fatal—better to fail fast
 	// than to silently relay without the rewrites the operator asked for.
-	engine, err := relayscript.New(relayscript.Options{Path: *scriptPath, Timeout: *scriptTimeout, Console: scriptConsole})
+	defaultScriptSource := ""
+	defaultReloadMode := reloadMode
+	if builtInName, ok := builtinplugins.IsBuiltIn(*scriptPath); ok {
+		data, err := builtinplugins.ReadBuiltIn(builtInName)
+		if err != nil {
+			logger.Fatalf("failed to load built-in script %q: %v", *scriptPath, err)
+		}
+		defaultScriptSource = string(data)
+		defaultReloadMode = relayscript.ReloadOff
+	}
+	engine, err := relayscript.New(relayscript.Options{Path: *scriptPath, Source: defaultScriptSource, Timeout: *scriptTimeout, Console: scriptConsole})
 	if err != nil {
 		logger.Fatalf("failed to load script %q: %v", *scriptPath, err)
 	}
-	scriptRegistry, err := buildScriptRegistry(appCfg, engine, *scriptTimeout, reloadMode, scriptConsole)
+	scriptRegistry, err := buildScriptRegistry(appCfg, engine, *scriptTimeout, defaultReloadMode, scriptConsole)
 	if err != nil {
 		logger.Fatalf("failed to load rewrite profiles: %v", err)
 	}
 	if engine != nil || len(scriptRegistry.Profiles()) > 0 {
-		stop, werr := scriptRegistry.WatchAll(reloadMode, func(profile string, rerr error) {
+		stop, werr := scriptRegistry.WatchAll(defaultReloadMode, func(profile string, rerr error) {
 			label := "default script"
 			if profile != "" {
 				label = "rewrite profile " + profile
@@ -177,7 +188,7 @@ func main() {
 	scriptSummary := "disabled"
 	if engine != nil {
 		scriptSummary = fmt.Sprintf("%s (req=%t resp=%t reload=%s timeout=%s)",
-			*scriptPath, engine.HasRequestHook(), engine.HasResponseHook(), reloadMode, *scriptTimeout)
+			*scriptPath, engine.HasRequestHook(), engine.HasResponseHook(), defaultReloadMode, *scriptTimeout)
 	}
 	if profiles := scriptRegistry.Profiles(); len(profiles) > 0 {
 		scriptSummary += fmt.Sprintf("; profiles=%d", len(profiles))
@@ -277,6 +288,7 @@ func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bo
 func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine, defaultTimeout time.Duration, defaultReload relayscript.ReloadMode, console io.Writer) (*relayscript.Registry, error) {
 	profiles := make([]relayscript.ProfileOptions, 0, len(cfg.Rewrite.Profiles))
 	for name, configured := range cfg.Rewrite.Profiles {
+		source := ""
 		timeout := defaultTimeout
 		if configured.Timeout.Set {
 			timeout = configured.Timeout.Duration
@@ -289,8 +301,16 @@ func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine
 			}
 			reload = parsed
 		}
+		if builtInName, ok := builtinplugins.IsBuiltIn(configured.Script); ok {
+			data, err := builtinplugins.ReadBuiltIn(builtInName)
+			if err != nil {
+				return nil, fmt.Errorf("rewrite profile %q: %w", name, err)
+			}
+			source = string(data)
+			reload = relayscript.ReloadOff
+		}
 		profiles = append(profiles, relayscript.ProfileOptions{
-			Name: name, Path: configured.Script, Timeout: timeout, Reload: reload, Console: console,
+			Name: name, Path: configured.Script, Source: source, Timeout: timeout, Reload: reload, Console: console,
 		})
 	}
 	return relayscript.NewRegistry(defaultEngine, profiles)

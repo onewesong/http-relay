@@ -58,7 +58,7 @@ func ParseReloadMode(raw string) (ReloadMode, error) {
 // (nil on success) so callers can log the outcome. It returns a stop function;
 // calling it ends watching and releases resources. For ReloadOff it is a no-op.
 func (e *Engine) Watch(mode ReloadMode, interval time.Duration, onReload func(error)) (stop func(), err error) {
-	if e == nil || mode == ReloadOff {
+	if e == nil || e.source != "" || mode == ReloadOff {
 		return func() {}, nil
 	}
 	if onReload == nil {

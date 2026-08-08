@@ -53,3 +53,20 @@ func TestBuildScriptRegistryAppliesProfileOverrides(t *testing.T) {
 		t.Fatalf("profiles=%+v", profiles)
 	}
 }
+
+func TestBuildScriptRegistryLoadsBuiltInProfile(t *testing.T) {
+	t.Parallel()
+
+	cfg := appconfig.Config{Rewrite: appconfig.RewriteConfig{Profiles: map[string]appconfig.RewriteProfile{
+		"openai": {Script: "builtin:rewrite.openai.js", Reload: "watch"},
+	}}}
+
+	registry, err := buildScriptRegistry(cfg, nil, 200*time.Millisecond, relayscript.ReloadWatch, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := registry.Profiles()
+	if len(profiles) != 1 || profiles[0].Path != "builtin:rewrite.openai.js" || profiles[0].Reload != relayscript.ReloadOff {
+		t.Fatalf("profiles=%+v", profiles)
+	}
+}

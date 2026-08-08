@@ -1,10 +1,11 @@
 [rewrite.profiles.openai]
-script = "./examples/rewrite.openai.js"
+script = "builtin:rewrite.openai.js"
 timeout = "500ms"
-reload = "watch"
+# 内置脚本已编入二进制，不支持热更新。
+reload = "off"
 
 [rewrite.profiles.mock]
-script = "./examples/rewrite.mock.js"
+script = "./plugins/examples/rewrite.mock.js"
 # timeout and reload are optional; omitted values inherit --script-timeout and
 # --script-reload.
 

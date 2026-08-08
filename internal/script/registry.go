@@ -11,6 +11,7 @@ import (
 type ProfileOptions struct {
 	Name    string
 	Path    string
+	Source  string
 	Timeout time.Duration
 	Reload  ReloadMode
 	Console io.Writer
@@ -45,7 +46,7 @@ func NewRegistry(defaultEngine *Engine, profiles []ProfileOptions) (*Registry, e
 		if _, exists := r.profiles[profile.Name]; exists {
 			return nil, fmt.Errorf("duplicate rewrite profile %q", profile.Name)
 		}
-		engine, err := New(Options{Path: profile.Path, Timeout: profile.Timeout, Console: profile.Console})
+		engine, err := New(Options{Path: profile.Path, Source: profile.Source, Timeout: profile.Timeout, Console: profile.Console})
 		if err != nil {
 			return nil, fmt.Errorf("load rewrite profile %q: %w", profile.Name, err)
 		}

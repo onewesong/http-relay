@@ -287,7 +287,7 @@ http-relay \
 
 ## JavaScript 改写
 
-复杂改写可以通过 `--script ./examples/relay.example.js` 提供
+复杂改写可以通过 `--script ./plugins/examples/relay.example.js` 提供
 `onRequest(req)` 和 `onResponse(resp, req)` Hook。`--script` 是未指定具名
 Profile 时使用的默认脚本。请求和响应字段可原地修改；
 `req.namespace`、`req.rewriteProfile`、`req.originalPath` 是两个 Hook 都可见的
@@ -298,12 +298,13 @@ Profile 时使用的默认脚本。请求和响应字段可原地修改；
 
 ```toml
 [rewrite.profiles.openai]
-script = "./examples/rewrite.openai.js"
+script = "builtin:rewrite.openai.js"
 timeout = "500ms"
-reload = "watch"
+# 内置脚本已编入二进制，不支持热更新。
+reload = "off"
 
 [rewrite.profiles.mock]
-script = "./examples/rewrite.mock.js"
+script = "./plugins/examples/rewrite.mock.js"
 # 省略 timeout/reload 时继承 --script-timeout/--script-reload
 ```
 
@@ -317,7 +318,9 @@ curl "http://127.0.0.1:7080/team-a/@mock/https://example.com/healthz"
 具名 Profile 只执行自身脚本，不会和 `--script` 组合；未知 Profile 返回
 `404`，也不能通过路径引用任意脚本文件。第一版仅在 regular 模式解析
 Profile，reverse 模式会把 `@profile` 当作普通上游路径。Profile 只选择改写
-逻辑，不提供 Relay 端口的写入认证。
+逻辑，不提供 Relay 端口的写入认证。`builtin:<文件名>` 引用随二进制发布的
+`plugins/built-in` 脚本，例如 `builtin:rewrite.openai.js`；内置脚本不可热更新。
+该引用同样可用于默认脚本：`--script builtin:rewrite.openai.js`。
 
 ## 上游代理
 

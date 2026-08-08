@@ -54,6 +54,19 @@ reload = "poll"
 	}
 }
 
+func TestRewriteProfileKeepsBuiltInReference(t *testing.T) {
+	path := writeConfig(t, `[rewrite.profiles.openai]
+script = "builtin:rewrite.openai.js"
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Rewrite.Profiles["openai"].Script; got != "builtin:rewrite.openai.js" {
+		t.Fatalf("script=%q", got)
+	}
+}
+
 func TestRewriteProfileValidation(t *testing.T) {
 	tests := []struct {
 		name string

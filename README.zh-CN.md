@@ -109,6 +109,9 @@ http-relay --mode reverse:https://api.example.com --timeout 30s
 
 ## 配置（环境变量）
 
+完整 TOML 字段、默认值、覆盖关系和安全限制见
+[配置详解](docs/configuration.zh-CN.md)。
+
 - `HOST`：监听地址（默认 `127.0.0.1`）
 - `PORT`：监听端口（默认 `7080`）
 - `WIRE_SCOPE`：`--dump-scope` 的兼容环境变量
@@ -321,6 +324,56 @@ Profile，reverse 模式会把 `@profile` 当作普通上游路径。Profile 只
 逻辑，不提供 Relay 端口的写入认证。`builtin:<文件名>` 引用随二进制发布的
 `plugins/built-in` 脚本，例如 `builtin:rewrite.openai.js`；内置脚本不可热更新。
 该引用同样可用于默认脚本：`--script builtin:rewrite.openai.js`。
+
+### 脚本调用外部 HTTP API
+
+脚本可以通过同步的 `relay.http.request(options)` 调用显式白名单中的外部 API。
+该能力默认关闭，不提供浏览器 `fetch`、Promise 或 `async/await`：
+
+```toml
+[rewrite.http]
+enabled = true
+allowed_origins = ["https://config.example.com"]
+timeout = "800ms"
+max_timeout = "1s"
+max_request_body_bytes = 1048576
+max_response_body_bytes = 1048576
+max_calls_per_hook = 3
+follow_redirects = false
+allow_private_networks = false
+
+[rewrite.profiles.external-config]
+script = "./plugins/examples/rewrite.external-config.js"
+timeout = "1500ms"
+reload = "watch"
+```
+
+```js
+function onRequest(req) {
+  if (!relay.http.enabled) return;
+  try {
+    var response = relay.http.request({
+      url: "https://config.example.com/v1/features",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ namespace: req.namespace }),
+      timeoutMs: 300,
+    });
+    if (response.status === 200) {
+      req.headers["X-Feature"] = JSON.parse(response.body).enabled ? "1" : "0";
+    }
+  } catch (error) {
+    console.warn("external API failed:", error.message);
+  }
+}
+```
+
+返回对象包含 `status`、`headers`、`body` 和最终 `url`。HTTP `4xx/5xx` 正常
+返回；参数、网络、超时、白名单、私网地址、重定向和大小限制错误会抛出可捕获
+异常。外部调用使用独立 Client，不继承原始请求的 Authorization、Cookie 或代理
+环境变量。Hook 的 timeout 覆盖整个脚本执行过程，必须大于外部调用所需时间。
+默认禁止私网目标和重定向；即使允许私网，目标也必须精确匹配
+`allowed_origins`。
 
 ## 上游代理
 

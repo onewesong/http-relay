@@ -23,6 +23,7 @@
 package script
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,8 @@ type Options struct {
 	// Console receives output from console.log/info/warn/error/debug calls in
 	// the script. Nil discards it.
 	Console io.Writer
+	// HTTP provides the optional synchronous relay.http.request capability.
+	HTTP *HTTPService
 }
 
 // Request is the mutable view of an inbound request handed to onRequest.
@@ -84,8 +87,15 @@ type scriptVersion struct {
 // pooledRuntime is a goja.Runtime tagged with the script generation it was
 // initialized against, so stale runtimes can be rebuilt after a reload.
 type pooledRuntime struct {
-	rt  *goja.Runtime
-	gen uint64
+	rt    *goja.Runtime
+	gen   uint64
+	state *hookState
+}
+
+type hookState struct {
+	context  context.Context
+	calls    int
+	deadline time.Time
 }
 
 // Engine is a compiled script ready to run hooks.
@@ -94,6 +104,7 @@ type Engine struct {
 	source  string
 	timeout time.Duration
 	console io.Writer
+	http    *HTTPService
 	current atomic.Pointer[scriptVersion]
 	nextGen atomic.Uint64
 	pool    sync.Pool
@@ -120,7 +131,7 @@ func New(opts Options) (*Engine, error) {
 	if opts.Path == "" {
 		opts.Path = "in-memory script"
 	}
-	e := &Engine{path: opts.Path, source: opts.Source, timeout: timeout, console: console}
+	e := &Engine{path: opts.Path, source: opts.Source, timeout: timeout, console: console, http: opts.HTTP}
 	e.pool.New = func() any { return &pooledRuntime{} }
 
 	ver, err := e.compile()
@@ -151,7 +162,7 @@ func (e *Engine) compile() (*scriptVersion, error) {
 	// Run once in a probe runtime to surface init-time errors and to validate
 	// that any exported hooks are actually functions.
 	probe := goja.New()
-	installConsole(probe, e.console)
+	installBindings(probe, e.console, e.http, nil)
 	if _, err := probe.RunProgram(program); err != nil {
 		return nil, fmt.Errorf("init script %q: %w", e.path, err)
 	}
@@ -224,7 +235,7 @@ func (e *Engine) OnRequest(req *Request) (*Response, error) {
 	}
 
 	obj := newRequestObject(pr.rt, req)
-	ret, err := e.call(pr.rt, fn, obj)
+	ret, err := e.call(pr, fn, obj)
 	if err != nil {
 		return nil, fmt.Errorf("onRequest: %w", err)
 	}
@@ -260,7 +271,7 @@ func (e *Engine) OnResponse(resp *Response, req *Request) error {
 
 	respObj := newResponseObject(pr.rt, resp)
 	reqObj := newRequestObject(pr.rt, req)
-	if _, err := e.call(pr.rt, fn, respObj, reqObj); err != nil {
+	if _, err := e.call(pr, fn, respObj, reqObj); err != nil {
 		return fmt.Errorf("onResponse: %w", err)
 	}
 
@@ -269,12 +280,23 @@ func (e *Engine) OnResponse(resp *Response, req *Request) error {
 }
 
 // call invokes fn under the engine's timeout, interrupting a runaway script.
-func (e *Engine) call(rt *goja.Runtime, fn goja.Callable, args ...goja.Value) (goja.Value, error) {
+func (e *Engine) call(pr *pooledRuntime, fn goja.Callable, args ...goja.Value) (goja.Value, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pr.state = &hookState{context: ctx, deadline: time.Now().Add(e.timeout)}
+	timerDone := make(chan struct{})
 	timer := time.AfterFunc(e.timeout, func() {
-		rt.Interrupt(fmt.Sprintf("script exceeded %s timeout", e.timeout))
+		cancel()
+		pr.rt.Interrupt(fmt.Sprintf("script exceeded %s timeout", e.timeout))
+		close(timerDone)
 	})
-	defer timer.Stop()
-	defer rt.ClearInterrupt()
+	defer func() {
+		if !timer.Stop() {
+			<-timerDone
+		}
+		cancel()
+		pr.rt.ClearInterrupt()
+		pr.state = nil
+	}()
 
 	return fn(goja.Undefined(), args...)
 }
@@ -285,7 +307,7 @@ func (e *Engine) get(ver *scriptVersion) *pooledRuntime {
 	pr := e.pool.Get().(*pooledRuntime)
 	if pr.rt == nil || pr.gen != ver.gen {
 		pr.rt = goja.New()
-		installConsole(pr.rt, e.console)
+		installBindings(pr.rt, e.console, e.http, func() *hookState { return pr.state })
 		// ver.program compiled and ran cleanly in compile(); a re-run cannot fail.
 		_, _ = pr.rt.RunProgram(ver.program)
 		pr.gen = ver.gen
@@ -297,5 +319,6 @@ func (e *Engine) put(pr *pooledRuntime) {
 	if pr.rt != nil {
 		pr.rt.ClearInterrupt()
 	}
+	pr.state = nil
 	e.pool.Put(pr)
 }

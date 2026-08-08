@@ -67,6 +67,68 @@ script = "builtin:rewrite.openai.js"
 	}
 }
 
+func TestRewriteHTTPDefaultsDisabled(t *testing.T) {
+	cfg, _, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Rewrite.HTTP
+	if h.Enabled || h.Timeout.Duration != DefaultRewriteHTTPTimeout || h.MaxTimeout.Duration != DefaultRewriteHTTPMaxTimeout || h.MaxCallsPerHook != DefaultRewriteHTTPMaxCalls {
+		t.Fatalf("rewrite.http defaults=%+v", h)
+	}
+}
+
+func TestRewriteHTTPConfig(t *testing.T) {
+	path := writeConfig(t, `[rewrite.http]
+enabled = true
+allowed_origins = ["HTTPS://Bücher.Example:443", "https://xn--bcher-kva.example"]
+timeout = "500ms"
+max_timeout = "2s"
+max_request_body_bytes = 1024
+max_response_body_bytes = 2048
+max_calls_per_hook = 2
+follow_redirects = true
+allow_private_networks = true
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Rewrite.HTTP
+	if len(h.AllowedOrigins) != 1 || h.AllowedOrigins[0] != "https://xn--bcher-kva.example:443" {
+		t.Fatalf("origins=%v", h.AllowedOrigins)
+	}
+	if !h.Enabled || h.Timeout.Duration != 500*time.Millisecond || h.MaxTimeout.Duration != 2*time.Second || h.MaxRequestBodyBytes != 1024 || h.MaxResponseBodyBytes != 2048 || h.MaxCallsPerHook != 2 || !h.FollowRedirects || !h.AllowPrivateNetworks {
+		t.Fatalf("rewrite.http=%+v", h)
+	}
+}
+
+func TestRewriteHTTPValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"enabled without origins", "[rewrite.http]\nenabled=true\n", "allowed_origins"},
+		{"origin path", "[rewrite.http]\nallowed_origins=[\"https://example.com/path\"]\n", "must not contain"},
+		{"origin userinfo", "[rewrite.http]\nallowed_origins=[\"https://u:p@example.com\"]\n", "must not contain"},
+		{"origin wildcard", "[rewrite.http]\nallowed_origins=[\"https://*.example.com\"]\n", "invalid hostname"},
+		{"origin query", "[rewrite.http]\nallowed_origins=[\"https://example.com?q=1\"]\n", "must not contain"},
+		{"bad scheme", "[rewrite.http]\nallowed_origins=[\"ftp://example.com\"]\n", "http or https"},
+		{"max below default", "[rewrite.http]\ntimeout=\"2s\"\nmax_timeout=\"1s\"\n", "max_timeout"},
+		{"body too large", "[rewrite.http]\nmax_response_body_bytes=16777217\n", "max_response_body_bytes"},
+		{"calls too large", "[rewrite.http]\nmax_calls_per_hook=17\n", "max_calls_per_hook"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.body)
+			if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v want=%q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRewriteProfileValidation(t *testing.T) {
 	tests := []struct {
 		name string

@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/net/idna"
 )
 
 const (
@@ -20,6 +23,12 @@ const (
 	EnvJWTSecret                       = "WEB_AUTH_JWT_SECRET"
 	EnvMaxTransactionsPerNamespace     = "WEB_MAX_TRANSACTIONS_PER_NAMESPACE"
 	DefaultMaxTransactionsPerNamespace = 100
+	DefaultRewriteHTTPTimeout          = time.Second
+	DefaultRewriteHTTPMaxTimeout       = 3 * time.Second
+	DefaultRewriteHTTPMaxBodyBytes     = int64(1 << 20)
+	DefaultRewriteHTTPMaxCalls         = 3
+	MaxRewriteHTTPBodyBytes            = int64(16 << 20)
+	MaxRewriteHTTPCalls                = 16
 )
 
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -57,6 +66,19 @@ type Config struct {
 
 type RewriteConfig struct {
 	Profiles map[string]RewriteProfile `toml:"profiles"`
+	HTTP     RewriteHTTPConfig         `toml:"http"`
+}
+
+type RewriteHTTPConfig struct {
+	Enabled              bool     `toml:"enabled"`
+	AllowedOrigins       []string `toml:"allowed_origins"`
+	Timeout              Duration `toml:"timeout"`
+	MaxTimeout           Duration `toml:"max_timeout"`
+	MaxRequestBodyBytes  int64    `toml:"max_request_body_bytes"`
+	MaxResponseBodyBytes int64    `toml:"max_response_body_bytes"`
+	MaxCallsPerHook      int      `toml:"max_calls_per_hook"`
+	FollowRedirects      bool     `toml:"follow_redirects"`
+	AllowPrivateNetworks bool     `toml:"allow_private_networks"`
 }
 
 type RewriteProfile struct {
@@ -88,7 +110,16 @@ type AuthConfig struct {
 }
 
 func defaults() Config {
-	return Config{Rewrite: RewriteConfig{Profiles: make(map[string]RewriteProfile)}, Web: WebConfig{MaxTransactionsPerNamespace: DefaultMaxTransactionsPerNamespace, Auth: AuthConfig{
+	return Config{Rewrite: RewriteConfig{
+		Profiles: make(map[string]RewriteProfile),
+		HTTP: RewriteHTTPConfig{
+			Timeout:              Duration{DefaultRewriteHTTPTimeout},
+			MaxTimeout:           Duration{DefaultRewriteHTTPMaxTimeout},
+			MaxRequestBodyBytes:  DefaultRewriteHTTPMaxBodyBytes,
+			MaxResponseBodyBytes: DefaultRewriteHTTPMaxBodyBytes,
+			MaxCallsPerHook:      DefaultRewriteHTTPMaxCalls,
+		},
+	}, Web: WebConfig{MaxTransactionsPerNamespace: DefaultMaxTransactionsPerNamespace, Auth: AuthConfig{
 		Issuer:      "http-relay",
 		Audience:    "http-relay-web",
 		TokenTTL:    Duration{30 * 24 * time.Hour},
@@ -225,6 +256,9 @@ func (c *Config) Validate(envSecret string) error {
 		}
 		c.Rewrite.Profiles[name] = profile
 	}
+	if err := c.Rewrite.HTTP.validate(); err != nil {
+		return fmt.Errorf("rewrite.http: %w", err)
+	}
 	a := &c.Web.Auth
 	a.Mode = strings.TrimSpace(strings.ToLower(a.Mode))
 	if a.Mode == "" {
@@ -259,6 +293,80 @@ func (c *Config) Validate(envSecret string) error {
 	a.Secret = secret
 	a.SecretBytes = decoded
 	return nil
+}
+
+func (c *RewriteHTTPConfig) validate() error {
+	if c.Timeout.Duration <= 0 {
+		return errors.New("timeout must be greater than zero")
+	}
+	if c.MaxTimeout.Duration < c.Timeout.Duration {
+		return errors.New("max_timeout must be greater than or equal to timeout")
+	}
+	if c.MaxRequestBodyBytes <= 0 || c.MaxRequestBodyBytes > MaxRewriteHTTPBodyBytes {
+		return fmt.Errorf("max_request_body_bytes must be between 1 and %d", MaxRewriteHTTPBodyBytes)
+	}
+	if c.MaxResponseBodyBytes <= 0 || c.MaxResponseBodyBytes > MaxRewriteHTTPBodyBytes {
+		return fmt.Errorf("max_response_body_bytes must be between 1 and %d", MaxRewriteHTTPBodyBytes)
+	}
+	if c.MaxCallsPerHook <= 0 || c.MaxCallsPerHook > MaxRewriteHTTPCalls {
+		return fmt.Errorf("max_calls_per_hook must be between 1 and %d", MaxRewriteHTTPCalls)
+	}
+	if c.Enabled && len(c.AllowedOrigins) == 0 {
+		return errors.New("allowed_origins must not be empty when enabled")
+	}
+	seen := make(map[string]struct{}, len(c.AllowedOrigins))
+	normalized := make([]string, 0, len(c.AllowedOrigins))
+	for _, raw := range c.AllowedOrigins {
+		origin, err := normalizeHTTPOrigin(raw)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		normalized = append(normalized, origin)
+	}
+	c.AllowedOrigins = normalized
+	return nil
+}
+
+func normalizeHTTPOrigin(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid allowed origin %q", raw)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("allowed origin %q must use http or https", raw)
+	}
+	if u.Opaque != "" || u.User != nil || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("allowed origin %q must not contain userinfo, path, query, or fragment", raw)
+	}
+	hostname := u.Hostname()
+	if hostname == "" || strings.HasSuffix(hostname, ".") || strings.Contains(hostname, "*") {
+		return "", fmt.Errorf("allowed origin %q has an invalid hostname", raw)
+	}
+	if ip := net.ParseIP(hostname); ip == nil {
+		hostname, err = idna.Lookup.ToASCII(hostname)
+		if err != nil || hostname == "" {
+			return "", fmt.Errorf("allowed origin %q has an invalid hostname", raw)
+		}
+		hostname = strings.ToLower(hostname)
+	}
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil || port == "0" {
+		return "", fmt.Errorf("allowed origin %q has an invalid port", raw)
+	}
+	return scheme + "://" + net.JoinHostPort(hostname, port), nil
 }
 
 func DecodeSecret(value string) ([]byte, error) {

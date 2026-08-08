@@ -1,3 +1,16 @@
+[rewrite.http]
+# External HTTP calls from JavaScript are disabled by default. When enabled,
+# every target must exactly match one of these scheme/host/port origins.
+enabled = false
+allowed_origins = []
+timeout = "1s"
+max_timeout = "3s"
+max_request_body_bytes = 1048576
+max_response_body_bytes = 1048576
+max_calls_per_hook = 3
+follow_redirects = false
+allow_private_networks = false
+
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
 timeout = "500ms"

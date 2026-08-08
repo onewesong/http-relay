@@ -146,6 +146,25 @@ func main() {
 	if *tuiFlag {
 		scriptConsole = io.Discard
 	}
+	scriptHTTP, err := relayscript.NewHTTPService(relayscript.HTTPOptions{
+		Enabled:              appCfg.Rewrite.HTTP.Enabled,
+		AllowedOrigins:       appCfg.Rewrite.HTTP.AllowedOrigins,
+		DefaultTimeout:       appCfg.Rewrite.HTTP.Timeout.Duration,
+		MaxTimeout:           appCfg.Rewrite.HTTP.MaxTimeout.Duration,
+		MaxRequestBodyBytes:  appCfg.Rewrite.HTTP.MaxRequestBodyBytes,
+		MaxResponseBodyBytes: appCfg.Rewrite.HTTP.MaxResponseBodyBytes,
+		MaxCallsPerHook:      appCfg.Rewrite.HTTP.MaxCallsPerHook,
+		FollowRedirects:      appCfg.Rewrite.HTTP.FollowRedirects,
+		AllowPrivateNetworks: appCfg.Rewrite.HTTP.AllowPrivateNetworks,
+	})
+	if err != nil {
+		logger.Fatalf("failed to configure script HTTP: %v", err)
+	}
+	httpInfo := scriptHTTP.Info()
+	logger.Printf("script http: enabled=%t origins=%d timeout=%s max_timeout=%s request_body=%d response_body=%d calls_per_hook=%d redirects=%t private_networks=%t",
+		httpInfo.Enabled, httpInfo.AllowedOrigins, httpInfo.DefaultTimeout, httpInfo.MaxTimeout,
+		httpInfo.MaxRequestBodyBytes, httpInfo.MaxResponseBodyBytes, httpInfo.MaxCallsPerHook,
+		httpInfo.FollowRedirects, httpInfo.AllowPrivateNetworks)
 
 	// A script that fails to compile at startup is fatal—better to fail fast
 	// than to silently relay without the rewrites the operator asked for.
@@ -159,11 +178,11 @@ func main() {
 		defaultScriptSource = string(data)
 		defaultReloadMode = relayscript.ReloadOff
 	}
-	engine, err := relayscript.New(relayscript.Options{Path: *scriptPath, Source: defaultScriptSource, Timeout: *scriptTimeout, Console: scriptConsole})
+	engine, err := relayscript.New(relayscript.Options{Path: *scriptPath, Source: defaultScriptSource, Timeout: *scriptTimeout, Console: scriptConsole, HTTP: scriptHTTP})
 	if err != nil {
 		logger.Fatalf("failed to load script %q: %v", *scriptPath, err)
 	}
-	scriptRegistry, err := buildScriptRegistry(appCfg, engine, *scriptTimeout, defaultReloadMode, scriptConsole)
+	scriptRegistry, err := buildScriptRegistry(appCfg, engine, *scriptTimeout, defaultReloadMode, scriptConsole, scriptHTTP)
 	if err != nil {
 		logger.Fatalf("failed to load rewrite profiles: %v", err)
 	}
@@ -285,7 +304,7 @@ func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bo
 	return opts, nil
 }
 
-func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine, defaultTimeout time.Duration, defaultReload relayscript.ReloadMode, console io.Writer) (*relayscript.Registry, error) {
+func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine, defaultTimeout time.Duration, defaultReload relayscript.ReloadMode, console io.Writer, scriptHTTP *relayscript.HTTPService) (*relayscript.Registry, error) {
 	profiles := make([]relayscript.ProfileOptions, 0, len(cfg.Rewrite.Profiles))
 	for name, configured := range cfg.Rewrite.Profiles {
 		source := ""
@@ -310,7 +329,7 @@ func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine
 			reload = relayscript.ReloadOff
 		}
 		profiles = append(profiles, relayscript.ProfileOptions{
-			Name: name, Path: configured.Script, Source: source, Timeout: timeout, Reload: reload, Console: console,
+			Name: name, Path: configured.Script, Source: source, Timeout: timeout, Reload: reload, Console: console, HTTP: scriptHTTP,
 		})
 	}
 	return relayscript.NewRegistry(defaultEngine, profiles)

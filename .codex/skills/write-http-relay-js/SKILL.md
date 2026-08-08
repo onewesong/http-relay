@@ -1,6 +1,6 @@
 ---
 name: write-http-relay-js
-description: 编写、修改、审查和调试 http-relay JavaScript 流量改写脚本，并配置默认脚本或路径绑定的 rewrite Profile。用于用户要求按请求或响应内容改写 URL、Header、Body、状态码，创建本地 Mock/短路响应，按 namespace 或 Profile 区分逻辑，排查脚本 Hook 超时或运行错误，以及新增或更新 .js 改写示例时。
+description: 编写、修改、审查和调试 http-relay JavaScript 流量改写脚本，并配置默认脚本、路径绑定的 rewrite Profile 或受控外部 HTTP API。用于用户要求按请求或响应内容改写 URL、Header、Body、状态码，创建本地 Mock/短路响应，通过 relay.http.request 调用白名单 API，按 namespace 或 Profile 区分逻辑，排查脚本 Hook 超时或运行错误，以及新增或更新 .js 改写示例时。
 ---
 
 # 编写 http-relay JavaScript 改写脚本
@@ -8,7 +8,7 @@ description: 编写、修改、审查和调试 http-relay JavaScript 流量改�
 ## 工作流程
 
 1. 先确认需求属于请求改写、响应改写、短路响应，还是三者组合。
-2. 读取 `internal/script/engine.go` 和 `internal/script/bindings.go` 核对当前绑定；若只需常见模式，参考 `examples/relay.example.js`。
+2. 读取 `internal/script/engine.go`、`internal/script/bindings.go` 和 `internal/script/httpapi.go` 核对当前绑定；若只需常见模式，参考 `plugins/examples/relay.example.js`。
 3. 选择加载方式：
    - 所有未指定 Profile 的请求共用脚本：使用 `--script <file>`。
    - 通过路径选择不同逻辑：在 TOML 的 `[rewrite.profiles.<name>]` 下注册脚本。
@@ -52,6 +52,25 @@ function onResponse(resp, req) {
 - `resp.body`：字符串。
 
 通过赋值增加或覆盖 Header，通过 `delete` 删除 Header。多值 Header 传入 JS 时以 `, ` 连接，写回时成为单值。Relay 会重新计算正文的 `Content-Length`。
+
+可选外部 HTTP API：
+
+```js
+var response = relay.http.request({
+  url: "https://config.example.com/v1/features",
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ namespace: req.namespace }),
+  timeoutMs: 300,
+});
+```
+
+- `relay.http.enabled` 表示 `[rewrite.http]` 是否启用。
+- `relay.http.request()` 是同步 API，返回 `status`、`headers`、`body`、`url`。
+- HTTP `4xx/5xx` 正常返回；参数、策略、网络、超时和大小限制错误抛出可捕获异常。
+- 目标必须精确匹配 `allowed_origins`；默认禁止私网地址和重定向。
+- API 不继承原始请求 Header、Cookie、Authorization 或代理环境变量。
+- Hook timeout 覆盖外部调用；脚本应使用 `try/catch` 提供降级行为。
 
 ## 常用模式
 
@@ -109,12 +128,12 @@ function onResponse(resp, req) {
 
 ```toml
 [rewrite.profiles.openai]
-script = "./examples/rewrite.openai.js"
+script = "builtin:rewrite.openai.js"
 timeout = "500ms"
-reload = "watch"
+reload = "off"
 
 [rewrite.profiles.mock]
-script = "./examples/rewrite.mock.js"
+script = "./plugins/examples/rewrite.mock.js"
 # 省略 timeout/reload 时继承 --script-timeout/--script-reload
 ```
 
@@ -131,7 +150,9 @@ curl "http://127.0.0.1:7080/team-a/@mock/https://example.com/healthz"
 ## 约束与排错
 
 - 保持 Hook 同步且短小；执行超过 timeout 会返回 `500`。
-- 避免依赖 `fetch`、`require`、`import`、DOM、文件系统或 Node.js 内置模块；运行时是嵌入式 goja。
+- 不要使用 `fetch`、Promise、`require`、`import`、DOM、文件系统或 Node.js 内置模块；外部调用只能使用配置允许的同步 `relay.http.request()`。
+- 外部 API 调用会增加 Relay 请求延迟，应保持低延迟、限制次数并用 `try/catch` 明确降级。
+- 不要把原始请求的 Authorization、Cookie 等敏感 Header 自动复制给外部 API。
 - 不要修改只读路由上下文；赋值会使 Hook 失败。
 - 使用 `console.log/info/warn/error/debug` 输出诊断信息；TUI 模式会静默这些输出。
 - 保留 JSON 解析的 `try/catch`，并先检查 `Content-Type` 和空正文。

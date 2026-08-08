@@ -44,7 +44,7 @@ func TestBuildScriptRegistryAppliesProfileOverrides(t *testing.T) {
 		},
 	}}}
 
-	registry, err := buildScriptRegistry(cfg, nil, 200*time.Millisecond, relayscript.ReloadWatch, io.Discard)
+	registry, err := buildScriptRegistry(cfg, nil, 200*time.Millisecond, relayscript.ReloadWatch, io.Discard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestBuildScriptRegistryLoadsBuiltInProfile(t *testing.T) {
 		"openai": {Script: "builtin:rewrite.openai.js", Reload: "watch"},
 	}}}
 
-	registry, err := buildScriptRegistry(cfg, nil, 200*time.Millisecond, relayscript.ReloadWatch, io.Discard)
+	registry, err := buildScriptRegistry(cfg, nil, 200*time.Millisecond, relayscript.ReloadWatch, io.Discard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

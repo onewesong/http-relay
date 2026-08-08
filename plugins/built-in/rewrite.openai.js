@@ -1,8 +1,6 @@
 // Example profile for API traffic. Route with /@openai/{absolute-url} or
 // /{namespace}/@openai/{absolute-url}.
 function onRequest(req) {
-  req.headers["X-Relay-Rewrite"] = "openai";
-  req.headers["X-Relay-Namespace"] = req.namespace || "default";
 
   // Enable web search for Responses requests unless the caller already added it.
   if (/\/v1\/responses(?:\?|$)/.test(req.url) && req.body) {

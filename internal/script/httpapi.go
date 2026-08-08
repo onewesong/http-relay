@@ -209,7 +209,7 @@ func (s *HTTPService) Request(ctx context.Context, request HTTPRequest) (*HTTPRe
 
 	response, err := s.client.Do(httpRequest)
 	if err != nil {
-		if errors.Is(requestContext.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if httpRequestTimedOut(err, requestContext, ctx) {
 			return nil, errors.New("HTTP request timed out")
 		}
 		if requestContext.Err() != nil || ctx.Err() != nil {
@@ -222,7 +222,7 @@ func (s *HTTPService) Request(ctx context.Context, request HTTPRequest) (*HTTPRe
 	limited := io.LimitReader(response.Body, s.opts.MaxResponseBodyBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		if errors.Is(requestContext.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if httpRequestTimedOut(err, requestContext, ctx) {
 			return nil, errors.New("HTTP request timed out")
 		}
 		if requestContext.Err() != nil || ctx.Err() != nil {
@@ -238,6 +238,14 @@ func (s *HTTPService) Request(ctx context.Context, request HTTPRequest) (*HTTPRe
 		headers[name] = strings.Join(values, ", ")
 	}
 	return &HTTPResponse{Status: response.StatusCode, Headers: headers, Body: string(data), URL: response.Request.URL.String()}, nil
+}
+
+func httpRequestTimedOut(err error, requestContext, parent context.Context) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(requestContext.Err(), context.DeadlineExceeded) || errors.Is(parent.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 func (s *HTTPService) validateURL(raw string) (*url.URL, error) {

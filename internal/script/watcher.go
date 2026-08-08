@@ -27,6 +27,11 @@ const (
 // is supplied.
 const DefaultPollInterval = time.Second
 
+// watchReloadDebounce waits for a sequence of write events to settle before
+// reading the script. A direct overwrite can otherwise notify after truncate
+// but before the new content is fully written.
+const watchReloadDebounce = 25 * time.Millisecond
+
 func (m ReloadMode) String() string {
 	switch m {
 	case ReloadWatch:
@@ -121,6 +126,13 @@ func (e *Engine) watchFS(onReload func(error)) (func(), error) {
 	target := filepath.Clean(e.path)
 	done := make(chan struct{})
 	go func() {
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		defer func() {
+			if timer != nil {
+				timer.Stop()
+			}
+		}()
 		for {
 			select {
 			case <-done:
@@ -135,6 +147,20 @@ func (e *Engine) watchFS(onReload func(error)) (func(), error) {
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
 					continue
 				}
+				if timer == nil {
+					timer = time.NewTimer(watchReloadDebounce)
+				} else {
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timer.Reset(watchReloadDebounce)
+				}
+				timerC = timer.C
+			case <-timerC:
+				timerC = nil
 				onReload(e.Reload())
 			case _, ok := <-w.Errors:
 				if !ok {

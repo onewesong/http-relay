@@ -31,6 +31,34 @@ func TestReadBuiltInChatCompletionsCompatibility(t *testing.T) {
 	}
 }
 
+func TestReadBuiltInAnthropicMessagesCompatibility(t *testing.T) {
+	t.Parallel()
+
+	source, err := ReadBuiltIn("rewrite.anthropic-messages-to-responses.js")
+	if err != nil {
+		t.Fatalf("ReadBuiltIn: %v", err)
+	}
+	for _, hook := range []string{"onRequest", "onResponse", "onResponseEvent"} {
+		if !strings.Contains(string(source), "function "+hook) {
+			t.Fatalf("embedded script is missing %s", hook)
+		}
+	}
+}
+
+func TestReadBuiltInAnthropicMessagesChatCompletionsCompatibility(t *testing.T) {
+	t.Parallel()
+
+	source, err := ReadBuiltIn("rewrite.anthropic-messages-to-chat-completions.js")
+	if err != nil {
+		t.Fatalf("ReadBuiltIn: %v", err)
+	}
+	for _, hook := range []string{"onRequest", "onResponse", "onResponseEvent"} {
+		if !strings.Contains(string(source), "function "+hook) {
+			t.Fatalf("embedded script is missing %s", hook)
+		}
+	}
+}
+
 func TestReadBuiltInRejectsInvalidNames(t *testing.T) {
 	t.Parallel()
 

@@ -157,6 +157,16 @@ reload = "watch"
 script = "builtin:rewrite.chat-completions-to-responses.js"
 timeout = "200ms"
 reload = "watch"
+
+[rewrite.profiles.anthropic-compat]
+script = "builtin:rewrite.anthropic-messages-to-responses.js"
+timeout = "200ms"
+reload = "off"
+
+[rewrite.profiles.anthropic-chat-compat]
+script = "builtin:rewrite.anthropic-messages-to-chat-completions.js"
+timeout = "200ms"
+reload = "off"
 ```
 
 | 字段 | 必填 | 默认行为 | 说明 |
@@ -187,6 +197,20 @@ curl -N http://127.0.0.1:7080/@openai-compat/https://api.openai.com/v1/chat/comp
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-5","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
+
+`anthropic-compat` 示例将 Anthropic `/v1/messages` 请求转为 Responses。它会把
+`x-api-key` 转为 Bearer 鉴权，并支持文本、base64 图片、自定义工具与 SSE：
+
+```bash
+curl -N http://127.0.0.1:7080/@anthropic-compat/https://api.openai.com/v1/messages \
+  -H 'x-api-key: $OPENAI_API_KEY' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'content-type: application/json' \
+  -d '{"model":"gpt-5","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"你好"}]}'
+```
+
+若上游只支持 Chat Completions，可选择 `anthropic-chat-compat`，并保持 Anthropic 客户端请求
+`/v1/messages` 不变；Relay 会转发至上游 `/v1/chat/completions`。
 
 行为说明：
 

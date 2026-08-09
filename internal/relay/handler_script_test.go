@@ -518,3 +518,49 @@ func TestHandler_ChatCompletionsResponsesBuiltInNonStream(t *testing.T) {
 		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
 	}
 }
+
+func TestHandler_AnthropicMessagesResponsesBuiltInStream(t *testing.T) {
+	t.Parallel()
+	source, err := builtinplugins.ReadBuiltIn("rewrite.anthropic-messages-to-responses.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := script.New(script.Options{Path: "anthropic compatibility", Source: string(source)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer test-key" || r.Header.Get("Anthropic-Version") != "" {
+			t.Errorf("upstream path=%q headers=%v", r.URL.Path, r.Header)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.created\ndata: {\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-test\",\"usage\":{\"input_tokens\":2,\"output_tokens\":0}}}\n\nevent: response.output_text.delta\ndata: {\"item_id\":\"item_1\",\"delta\":\"Hi\"}\n\nevent: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n")
+	}))
+	defer upstream.Close()
+	capture := &responseCaptureReporter{}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second}
+	relayServer := httptest.NewServer(NewHandlerWithOptions(client, log.New(io.Discard, "", 0), HandlerOptions{
+		TargetMode: DefaultTargetMode(), DumpRequest: true, DumpScope: DumpScopeReq | DumpScopeResp, ScriptEngine: e, Reporter: capture,
+	}))
+	defer relayServer.Close()
+
+	req, err := http.NewRequest(http.MethodPost, relayServer.URL+"/"+upstream.URL+"/v1/messages", strings.NewReader(`{"model":"gpt-test","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"Hello"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", "test-key")
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"message_start"`) || !strings.Contains(string(body), `"text_delta"`) || !strings.Contains(string(body), `"message_stop"`) {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(capture.body), `"message_stop"`) || !strings.Contains(capture.head, "Content-Type: text/event-stream") {
+		t.Fatalf("captured head=%q body=%q", capture.head, capture.body)
+	}
+}

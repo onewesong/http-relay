@@ -32,6 +32,16 @@ script = "builtin:rewrite.chat-completions-to-responses.js"
 timeout = "200ms"
 reload = "watch"
 
+[rewrite.profiles.anthropic-compat]
+script = "builtin:rewrite.anthropic-messages-to-responses.js"
+timeout = "200ms"
+reload = "off"
+
+[rewrite.profiles.anthropic-chat-compat]
+script = "builtin:rewrite.anthropic-messages-to-chat-completions.js"
+timeout = "200ms"
+reload = "off"
+
 [web]
 # Maximum retained transactions for each namespace, including the default view.
 max_transactions_per_namespace = 100

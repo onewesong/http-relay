@@ -1,6 +1,11 @@
 package relay
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"testing"
 )
@@ -89,4 +94,68 @@ func TestProxySelectorNoProxy(t *testing.T) {
 	if proxyURL != nil {
 		t.Fatalf("expected direct connection, got proxy=%v", proxyURL)
 	}
+}
+
+func TestProtectedRequestBypassesProxy(t *testing.T) {
+	t.Parallel()
+	direct := newBaseTransport()
+	direct.DialContext = func(_ context.Context, _, _ string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			buf := make([]byte, 4096)
+			_, _ = server.Read(buf)
+			_, _ = server.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+		}()
+		return client, nil
+	}
+	transport := &RelayTransport{
+		selector: func(*url.URL) (*url.URL, error) { return nil, errors.New("proxy selector should not run") },
+		direct:   direct,
+	}
+	policy := &TargetPolicy{resolver: staticResolver{"public.test": {{IP: net.ParseIP("8.8.8.8")}}}}
+	ctx := withTargetPolicy(context.Background(), policy)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://public.test/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+}
+
+func TestProtectedDialUsesValidatedIP(t *testing.T) {
+	t.Parallel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan struct{})
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			close(accepted)
+			_ = conn.Close()
+		}
+	}()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), targetDialInfoContextKey{}, targetDialInfo{
+		host: "public.test", port: port, addresses: []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}},
+	})
+	transport := &RelayTransport{}
+	conn, err := transport.dialContext(ctx, "tcp", fmt.Sprintf("public.test:%s", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	<-accepted
 }

@@ -34,6 +34,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPathRaw := flag.String("config", "", "TOML configuration path (or HTTP_RELAY_CONFIG)")
 	modeRaw := flag.String("mode", "regular", "target mode: regular or reverse:<url>")
+	allowPrivateTargets := flag.Bool("allow-private-targets", false, "allow regular-mode targets that resolve to private or local addresses")
 	listen := flag.String("listen", "", "listen address, overrides --host and --port")
 	host := flag.String("host", envOrDefault("HOST", "127.0.0.1"), "listen host")
 	port := flag.String("port", envOrDefault("PORT", "7080"), "listen port")
@@ -128,6 +129,10 @@ func main() {
 	mode, err := relay.ParseMode(*modeRaw)
 	if err != nil {
 		logger.Fatalf("invalid mode: %v", err)
+	}
+	var targetPolicy *relay.TargetPolicy
+	if mode.IsRegular() && !*allowPrivateTargets {
+		targetPolicy = relay.NewTargetPolicy()
 	}
 
 	headerRules, err := relay.ParseHeaderRules(addHeaders.values, modifyHeaders.values)
@@ -248,7 +253,7 @@ func main() {
 		// The TUI always captures full req+resp traffic and owns the screen.
 		dump = true
 		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
-		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
+		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, targetPolicy, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
 		return
 	}
 
@@ -263,12 +268,13 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, scriptSummary, meta, webOptions, logger, palette, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, targetPolicy, scriptSummary, meta, webOptions, logger, palette, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
 		return
 	}
 
 	handler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
 		TargetMode:           mode,
+		TargetPolicy:         targetPolicy,
 		HeaderRules:          headerRules,
 		DumpRequest:          dump,
 		DumpScope:            wireScope,
@@ -340,12 +346,13 @@ func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine
 // runTUI starts the relay server in the background and runs the interactive
 // TUI on the main goroutine (it owns the terminal). It returns when the user
 // quits the TUI.
-func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, maxSSEEventBytes, maxSSEEventsResponse int) {
+func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, targetPolicy *relay.TargetPolicy, maxSSEEventBytes, maxSSEEventsResponse int) {
 	header := tuiHeader(addr, mode, proxySummary, timeout)
 	prog, reporter := tui.New(header)
 
 	handler := relay.NewHandlerWithOptions(client, log.Default(), relay.HandlerOptions{
 		TargetMode:           mode,
+		TargetPolicy:         targetPolicy,
 		HeaderRules:          headerRules,
 		DumpRequest:          true,
 		DumpScope:            wireScope,
@@ -391,12 +398,13 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette, maxSSEEventBytes, maxSSEEventsResponse int) {
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, targetPolicy *relay.TargetPolicy, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette, maxSSEEventBytes, maxSSEEventsResponse int) {
 	webOptions.Logger = logger
 	webHandler, reporter := web.New(meta, webOptions)
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
 		TargetMode:           mode,
+		TargetPolicy:         targetPolicy,
 		HeaderRules:          headerRules,
 		DumpRequest:          true,
 		DumpScope:            wireScope,

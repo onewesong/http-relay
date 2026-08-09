@@ -81,6 +81,12 @@ func (m TargetMode) String() string {
 	}
 }
 
+// IsRegular reports whether clients select the upstream URL through the
+// request path instead of using a configured reverse-proxy upstream.
+func (m TargetMode) IsRegular() bool {
+	return m.kind == TargetModeAbsoluteURL
+}
+
 func (m TargetMode) TargetURL(r *http.Request) (*url.URL, error) {
 	resolved, err := m.Resolve(r)
 	if err != nil {

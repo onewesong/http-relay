@@ -32,6 +32,7 @@ var hopByHopHeaders = map[string]struct{}{
 
 type Handler struct {
 	client               *http.Client
+	targetPolicy         *TargetPolicy
 	reporter             Reporter
 	targetMode           TargetMode
 	headerRules          []HeaderRule
@@ -45,12 +46,15 @@ type Handler struct {
 }
 
 type HandlerOptions struct {
-	TargetMode  TargetMode
-	HeaderRules []HeaderRule
-	DumpRequest bool
-	DumpScope   DumpScope
-	MaskAuth    bool
-	Palette     Palette
+	TargetMode TargetMode
+	// TargetPolicy restricts client-selected regular-mode targets. Nil retains
+	// the unrestricted behavior for embedders that do not opt in.
+	TargetPolicy *TargetPolicy
+	HeaderRules  []HeaderRule
+	DumpRequest  bool
+	DumpScope    DumpScope
+	MaskAuth     bool
+	Palette      Palette
 	// Reporter overrides where captured traffic is rendered. When nil, a
 	// log-based reporter is built from the logger and Palette.
 	Reporter Reporter
@@ -158,8 +162,22 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 	if registry == nil {
 		registry, _ = script.NewRegistry(opts.ScriptEngine, nil)
 	}
+	configuredClient := *client
+	previousRedirect := configuredClient.CheckRedirect
+	configuredClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if opts.TargetPolicy != nil {
+			if err := opts.TargetPolicy.Validate(req.Context(), req.URL); err != nil {
+				return err
+			}
+		}
+		if previousRedirect != nil {
+			return previousRedirect(req, via)
+		}
+		return nil
+	}
 	return &Handler{
-		client:               client,
+		client:               &configuredClient,
+		targetPolicy:         opts.TargetPolicy,
 		reporter:             reporter,
 		targetMode:           opts.TargetMode,
 		headerRules:          append([]HeaderRule(nil), opts.HeaderRules...),
@@ -178,6 +196,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		h.logAccess(0, "", "", r.Method, "", http.StatusBadRequest, 0, 0, err.Error())
 		return
+	}
+	if h.targetPolicy != nil && h.targetMode.kind == TargetModeAbsoluteURL {
+		if err := h.targetPolicy.Validate(r.Context(), resolved.URL); err != nil {
+			status, msg := mapUpstreamError(err)
+			writeError(w, status, msg)
+			h.logAccess(0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), status, 0, 0, err.Error())
+			return
+		}
+		r = r.WithContext(withTargetPolicy(r.Context(), h.targetPolicy))
 	}
 	engine := h.scripts.Default()
 	if resolved.RewriteProfile != "" {

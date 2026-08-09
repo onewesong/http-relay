@@ -312,6 +312,10 @@ Relay 端口应通过监听地址、防火墙或可信反向代理限制访问�
 | `WIRE_SCOPE` | dump scope 回退值 | 会被 `--dump-scope` 覆盖。 |
 | `ALL_PROXY` / `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | Relay 上游代理 | 不影响 `relay.http.request()` 的独立 Client。 |
 
+regular 模式默认会拒绝路径指定的本地、私网和解析到这些地址的目标，并直接连接到
+已校验的 IP；因此这类受保护请求会绕过上游代理。仅在受信任环境确实需要访问内网上游
+时，使用 CLI 参数 `--allow-private-targets` 恢复原有的内网目标和代理行为。
+
 ## 完整示例
 
 ```toml

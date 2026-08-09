@@ -33,17 +33,29 @@ func NewTransportFromEnv() (*RelayTransport, string, error) {
 	socksBase := newBaseTransport()
 	socksBase.Proxy = nil
 
-	return &RelayTransport{
+	transport := &RelayTransport{
 		selector:     selector,
 		direct:       directBase,
 		httpByProxy:  make(map[string]*http.Transport),
 		socksByProxy: make(map[string]*http.Transport),
 		httpBase:     httpBase,
 		socksBase:    socksBase,
-	}, summary, nil
+	}
+	transport.direct.DialContext = transport.dialContext
+	return transport, summary, nil
 }
 
 func (t *RelayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if policy := targetPolicyFromContext(req.Context()); policy != nil {
+		dialInfo, err := policy.resolve(req.Context(), req.URL)
+		if err != nil {
+			return nil, err
+		}
+		// A proxy resolves the target itself, so it cannot preserve the checked
+		// address set. Protected requests intentionally use direct dialing.
+		req = req.Clone(context.WithValue(req.Context(), targetDialInfoContextKey{}, dialInfo))
+		return t.direct.RoundTrip(req)
+	}
 	proxyURL, err := t.selector(req.URL)
 	if err != nil {
 		return nil, err
@@ -66,6 +78,29 @@ func (t *RelayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme %q", proxyURL.Scheme)
 	}
+}
+
+type targetDialInfoContextKey struct{}
+
+func (t *RelayTransport) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	info, ok := ctx.Value(targetDialInfoContextKey{}).(targetDialInfo)
+	if !ok {
+		return (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, address)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || !strings.EqualFold(host, info.host) || port != info.port || len(info.addresses) == 0 {
+		return nil, ErrProhibitedTarget
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	var lastErr error
+	for _, candidate := range info.addresses {
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), info.port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, lastErr
 }
 
 func (t *RelayTransport) getOrCreateHTTPProxyTransport(proxyURL *url.URL) *http.Transport {

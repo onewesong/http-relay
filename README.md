@@ -198,6 +198,8 @@ printf '%s' "$TOKEN" | http-relay-auth inspect --config ./http-relay.toml -
 
 JWT protects only Web pages, SSE, queries, and Clear operations. It does not authenticate writes to the Relay port. Restrict that port at the network or reverse-proxy layer when exposed beyond localhost.
 
+In regular mode, http-relay rejects path targets that are local, private, link-local, multicast, CGNAT, or resolve to one of those addresses. The same check applies to redirects. This is enabled by default; use `--allow-private-targets` only for a trusted deployment that deliberately needs internal upstreams.
+
 Docker Compose can mount the full TOML as a Docker Secret:
 
 ```yaml
@@ -467,6 +469,8 @@ ALL_PROXY=socks5://127.0.0.1:1080 http-relay
 HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 ```
 
+When regular-mode private-target protection is enabled (the default), path-selected requests bypass these proxies so the relay itself can connect only to the IPs it validated. Set `--allow-private-targets` to retain proxy routing for trusted internal targets.
+
 ## Route Rule
 
 Default `regular` mode supports these four route shapes:
@@ -490,6 +494,18 @@ curl -i "http://127.0.0.1:7080/team-a/https://example.com"
 With `--web`, open `http://127.0.0.1:7090/namespace/team-a/` to see only `team-a` traffic. The root Web URL shows only requests without a namespace. Namespaces may contain letters, digits, dots, underscores, and hyphens, are limited to 64 characters, and must start with a letter or digit. Old Web paths such as `/team-a/` are not supported or redirected. Without JWT they only group traffic; JWT mode makes Web reads and Clear operations an authorization boundary. Reverse mode treats the entire path as an upstream path and does not parse namespaces.
 
 Target URL must include `http://` or `https://`.
+
+For example, this is rejected by default even when it appears in the request path as a hostname:
+
+```text
+http://127.0.0.1:7080/http://127.0.0.1:8080/
+```
+
+For trusted internal development only, start with:
+
+```bash
+http-relay --allow-private-targets
+```
 
 `reverse:<url>` mode joins the incoming path and query onto a fixed upstream:
 

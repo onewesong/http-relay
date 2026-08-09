@@ -190,6 +190,8 @@ printf '%s' "$TOKEN" | http-relay-auth inspect --config ./http-relay.toml -
 
 JWT 只保护 Web 端口上的页面、SSE、查询和 Clear 操作，不保护 Relay 端口的请求写入。任何能访问 Relay 端口的客户端仍可写入记录，因此公网部署时还应在反向代理或网络层限制 Relay 端口。
 
+在 regular 模式下，http-relay 默认拒绝路径指定的本地、私网、链路本地、组播、CGNAT 地址，以及解析到这些地址的域名；重定向目标也会逐跳校验。只有在受信任部署确实需要访问内网上游时，才应显式使用 `--allow-private-targets`。
+
 Docker Compose 可以把含 Secret 的完整 TOML 作为 Docker Secret 挂载：
 
 ```yaml
@@ -391,6 +393,8 @@ ALL_PROXY=socks5://127.0.0.1:1080 http-relay
 HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=example.com http-relay
 ```
 
+regular 模式的内网目标保护启用时（默认），路径指定的请求会绕过这些代理，使 Relay 只连接到已校验的 IP。对于受信任的内网上游，设置 `--allow-private-targets` 后才会恢复代理路由。
+
 ## 路由规则
 
 默认 `regular` 模式支持四种路径：
@@ -421,6 +425,18 @@ namespace 不会发送给上游，因此第一个请求的上游目标仍是 `ht
 namespace 只支持字母、数字、点、下划线和连字符，长度最多 64 个字符且必须以字母或数字开头。Web 旧路径（如 `/team-a/`）不再兼容，也不会自动重定向。未启用 JWT 时 namespace 只是流量分组；启用 JWT 后 Web 读取和清理具有权限隔离。反向代理模式不会解析 namespace，路径会完整转发给固定上游。
 
 目标 URL 必须包含 `http://` 或 `https://`。
+
+例如，下列本地目标默认会被拒绝：
+
+```text
+http://127.0.0.1:7080/http://127.0.0.1:8080/
+```
+
+仅限受信任的内网开发场景，可使用：
+
+```bash
+http-relay --allow-private-targets
+```
 
 `reverse:<url>` 模式会将原始路径和查询参数拼接到固定上游，例如：
 

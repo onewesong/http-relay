@@ -19,6 +19,12 @@ func mapUpstreamError(err error) (int, string) {
 	if err == nil {
 		return http.StatusInternalServerError, "internal server error"
 	}
+	if errors.Is(err, ErrProhibitedTarget) {
+		return http.StatusForbidden, ErrProhibitedTarget.Error()
+	}
+	if errors.Is(err, ErrTargetDNS) {
+		return http.StatusBadGateway, ErrTargetDNS.Error()
+	}
 
 	var netErr net.Error
 	if errors.As(err, &netErr) {

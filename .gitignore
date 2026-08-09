@@ -1,4 +1,4 @@
 .vscode/
 bin/
 config.toml
-http-relay
+/http-relay

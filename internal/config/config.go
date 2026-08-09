@@ -27,8 +27,11 @@ const (
 	DefaultRewriteHTTPMaxTimeout       = 3 * time.Second
 	DefaultRewriteHTTPMaxBodyBytes     = int64(1 << 20)
 	DefaultRewriteHTTPMaxCalls         = 3
+	DefaultRewriteMaxSSEEventBytes     = 1 << 20
+	DefaultRewriteMaxSSEEvents         = 100000
 	MaxRewriteHTTPBodyBytes            = int64(16 << 20)
 	MaxRewriteHTTPCalls                = 16
+	MaxRewriteSSEEventBytes            = 16 << 20
 )
 
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -65,8 +68,10 @@ type Config struct {
 }
 
 type RewriteConfig struct {
-	Profiles map[string]RewriteProfile `toml:"profiles"`
-	HTTP     RewriteHTTPConfig         `toml:"http"`
+	Profiles                map[string]RewriteProfile `toml:"profiles"`
+	HTTP                    RewriteHTTPConfig         `toml:"http"`
+	MaxSSEEventBytes        int                       `toml:"max_sse_event_bytes"`
+	MaxSSEEventsPerResponse int                       `toml:"max_sse_events_per_response"`
 }
 
 type RewriteHTTPConfig struct {
@@ -111,7 +116,9 @@ type AuthConfig struct {
 
 func defaults() Config {
 	return Config{Rewrite: RewriteConfig{
-		Profiles: make(map[string]RewriteProfile),
+		Profiles:                make(map[string]RewriteProfile),
+		MaxSSEEventBytes:        DefaultRewriteMaxSSEEventBytes,
+		MaxSSEEventsPerResponse: DefaultRewriteMaxSSEEvents,
 		HTTP: RewriteHTTPConfig{
 			Timeout:              Duration{DefaultRewriteHTTPTimeout},
 			MaxTimeout:           Duration{DefaultRewriteHTTPMaxTimeout},
@@ -258,6 +265,12 @@ func (c *Config) Validate(envSecret string) error {
 	}
 	if err := c.Rewrite.HTTP.validate(); err != nil {
 		return fmt.Errorf("rewrite.http: %w", err)
+	}
+	if c.Rewrite.MaxSSEEventBytes <= 0 || c.Rewrite.MaxSSEEventBytes > MaxRewriteSSEEventBytes {
+		return fmt.Errorf("rewrite.max_sse_event_bytes must be between 1 and %d", MaxRewriteSSEEventBytes)
+	}
+	if c.Rewrite.MaxSSEEventsPerResponse <= 0 {
+		return errors.New("rewrite.max_sse_events_per_response must be greater than zero")
 	}
 	a := &c.Web.Auth
 	a.Mode = strings.TrimSpace(strings.ToLower(a.Mode))

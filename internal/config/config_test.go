@@ -78,6 +78,20 @@ func TestRewriteHTTPDefaultsDisabled(t *testing.T) {
 	}
 }
 
+func TestRewriteSSELimits(t *testing.T) {
+	path := writeConfig(t, `[rewrite]
+max_sse_event_bytes = 2048
+max_sse_events_per_response = 12
+`)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Rewrite.MaxSSEEventBytes != 2048 || cfg.Rewrite.MaxSSEEventsPerResponse != 12 {
+		t.Fatalf("rewrite limits = %+v", cfg.Rewrite)
+	}
+}
+
 func TestRewriteHTTPConfig(t *testing.T) {
 	path := writeConfig(t, `[rewrite.http]
 enabled = true

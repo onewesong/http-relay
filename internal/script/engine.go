@@ -65,6 +65,9 @@ type Request struct {
 	Namespace      string
 	RewriteProfile string
 	OriginalPath   string
+	// StreamResponse selects event-level SSE response hooks for this request.
+	// Scripts may set req.streamResponse in onRequest.
+	StreamResponse bool
 }
 
 // Response is the mutable view of a response handed to onResponse, and the
@@ -78,10 +81,13 @@ type Response struct {
 // scriptVersion is an immutable compiled snapshot of a script. A new version is
 // produced on every successful compile and published atomically.
 type scriptVersion struct {
-	program *goja.Program
-	hasReq  bool
-	hasResp bool
-	gen     uint64
+	program      *goja.Program
+	hasReq       bool
+	hasResp      bool
+	hasRespStart bool
+	hasRespEvent bool
+	hasRespEnd   bool
+	gen          uint64
 }
 
 // pooledRuntime is a goja.Runtime tagged with the script generation it was
@@ -174,12 +180,30 @@ func (e *Engine) compile() (*scriptVersion, error) {
 	if err != nil {
 		return nil, err
 	}
+	hasRespStart, err := validateHook(probe, "onResponseStart")
+	if err != nil {
+		return nil, err
+	}
+	hasRespEvent, err := validateHook(probe, "onResponseEvent")
+	if err != nil {
+		return nil, err
+	}
+	hasRespEnd, err := validateHook(probe, "onResponseEnd")
+	if err != nil {
+		return nil, err
+	}
+	if (hasRespStart || hasRespEnd) && !hasRespEvent {
+		return nil, fmt.Errorf("script hooks onResponseStart/onResponseEnd require onResponseEvent")
+	}
 
 	return &scriptVersion{
-		program: program,
-		hasReq:  hasReq,
-		hasResp: hasResp,
-		gen:     e.nextGen.Add(1),
+		program:      program,
+		hasReq:       hasReq,
+		hasResp:      hasResp,
+		hasRespStart: hasRespStart,
+		hasRespEvent: hasRespEvent,
+		hasRespEnd:   hasRespEnd,
+		gen:          e.nextGen.Add(1),
 	}, nil
 }
 
@@ -213,6 +237,9 @@ func (e *Engine) HasRequestHook() bool { return e.current.Load().hasReq }
 
 // HasResponseHook reports whether the current script defines onResponse.
 func (e *Engine) HasResponseHook() bool { return e.current.Load().hasResp }
+
+// HasResponseEventHook reports whether the current script handles SSE events.
+func (e *Engine) HasResponseEventHook() bool { return e.current.Load().hasRespEvent }
 
 // OnRequest runs onRequest against req, mutating it in place. If the script
 // returns a response object it is returned here (non-nil) to short-circuit the
@@ -281,7 +308,11 @@ func (e *Engine) OnResponse(resp *Response, req *Request) error {
 
 // call invokes fn under the engine's timeout, interrupting a runaway script.
 func (e *Engine) call(pr *pooledRuntime, fn goja.Callable, args ...goja.Value) (goja.Value, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	return e.callContext(pr, context.Background(), fn, args...)
+}
+
+func (e *Engine) callContext(pr *pooledRuntime, parent context.Context, fn goja.Callable, args ...goja.Value) (goja.Value, error) {
+	ctx, cancel := context.WithCancel(parent)
 	pr.state = &hookState{context: ctx, deadline: time.Now().Add(e.timeout)}
 	timerDone := make(chan struct{})
 	timer := time.AfterFunc(e.timeout, func() {

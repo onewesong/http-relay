@@ -169,6 +169,7 @@ func newRequestObject(rt *goja.Runtime, req *Request) *goja.Object {
 	_ = obj.Set("host", req.Host)
 	_ = obj.Set("headers", headersToJS(rt, req.Header))
 	_ = obj.Set("body", string(req.Body))
+	_ = obj.Set("streamResponse", req.StreamResponse)
 	defineReadOnlyString(obj, "namespace", rt.ToValue(req.Namespace))
 	defineReadOnlyString(obj, "rewriteProfile", rt.ToValue(req.RewriteProfile))
 	defineReadOnlyString(obj, "originalPath", rt.ToValue(req.OriginalPath))
@@ -185,6 +186,9 @@ func readRequestObject(rt *goja.Runtime, obj *goja.Object, req *Request) {
 	req.URL = stringField(obj, "url")
 	req.Host = stringField(obj, "host")
 	req.Body = []byte(stringField(obj, "body"))
+	if stream := obj.Get("streamResponse"); stream != nil && !goja.IsUndefined(stream) && !goja.IsNull(stream) {
+		req.StreamResponse = stream.ToBoolean()
+	}
 	req.Header = jsToHeaders(rt, obj.Get("headers"))
 }
 

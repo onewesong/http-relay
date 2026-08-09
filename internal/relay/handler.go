@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -30,15 +31,17 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 type Handler struct {
-	client      *http.Client
-	reporter    Reporter
-	targetMode  TargetMode
-	headerRules []HeaderRule
-	dumpRequest bool
-	dumpScope   DumpScope
-	maskAuth    bool
-	scripts     *script.Registry
-	dumpSeq     atomic.Uint64
+	client               *http.Client
+	reporter             Reporter
+	targetMode           TargetMode
+	headerRules          []HeaderRule
+	dumpRequest          bool
+	dumpScope            DumpScope
+	maskAuth             bool
+	scripts              *script.Registry
+	maxSSEEventBytes     int
+	maxSSEEventsResponse int
+	dumpSeq              atomic.Uint64
 }
 
 type HandlerOptions struct {
@@ -57,7 +60,16 @@ type HandlerOptions struct {
 	// ScriptRegistry selects named path-bound rewrite profiles. When nil, a
 	// registry containing only ScriptEngine is created for compatibility.
 	ScriptRegistry *script.Registry
+	// MaxSSEEventBytes caps a complete upstream SSE frame before it reaches a
+	// streaming response hook. Zero uses DefaultMaxSSEEventBytes.
+	MaxSSEEventBytes int
+	// MaxSSEEventsResponse caps the number of input SSE frames handled for one
+	// response. Zero uses DefaultMaxSSEEventsResponse.
+	MaxSSEEventsResponse int
 }
+
+const DefaultMaxSSEEventBytes = 1 << 20
+const DefaultMaxSSEEventsResponse = 100000
 
 type DumpScope uint8
 
@@ -130,6 +142,12 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 	if opts.DumpScope == DumpScopeNone {
 		opts.DumpScope = DumpScopeReq | DumpScopeResp
 	}
+	if opts.MaxSSEEventBytes <= 0 {
+		opts.MaxSSEEventBytes = DefaultMaxSSEEventBytes
+	}
+	if opts.MaxSSEEventsResponse <= 0 {
+		opts.MaxSSEEventsResponse = DefaultMaxSSEEventsResponse
+	}
 
 	reporter := opts.Reporter
 	if reporter == nil {
@@ -141,14 +159,16 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 		registry, _ = script.NewRegistry(opts.ScriptEngine, nil)
 	}
 	return &Handler{
-		client:      client,
-		reporter:    reporter,
-		targetMode:  opts.TargetMode,
-		headerRules: append([]HeaderRule(nil), opts.HeaderRules...),
-		dumpRequest: opts.DumpRequest,
-		dumpScope:   opts.DumpScope,
-		maskAuth:    opts.MaskAuth,
-		scripts:     registry,
+		client:               client,
+		reporter:             reporter,
+		targetMode:           opts.TargetMode,
+		headerRules:          append([]HeaderRule(nil), opts.HeaderRules...),
+		dumpRequest:          opts.DumpRequest,
+		dumpScope:            opts.DumpScope,
+		maskAuth:             opts.MaskAuth,
+		scripts:              registry,
+		maxSSEEventBytes:     opts.MaxSSEEventBytes,
+		maxSSEEventsResponse: opts.MaxSSEEventsResponse,
 	}
 }
 
@@ -169,7 +189,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if engine != nil && (engine.HasRequestHook() || engine.HasResponseHook()) {
+	if engine != nil && (engine.HasRequestHook() || engine.HasResponseHook() || engine.HasResponseEventHook()) {
 		h.serveScripted(w, r, resolved, engine)
 		return
 	}
@@ -481,6 +501,10 @@ func copyResponseHeaders(dst, src http.Header) {
 // method/url/host/headers/body or short-circuit with a synthesized response,
 // and onResponse runs on whatever response results (upstream or short-circuit).
 func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request, resolved ResolvedTarget, engine *script.Engine) {
+	if engine.HasResponseEventHook() {
+		h.serveStreamingScripted(w, r, resolved, engine)
+		return
+	}
 	start := time.Now()
 	dumpID := uint64(0)
 	if h.dumpRequest {
@@ -523,6 +547,7 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request, resolved
 		Namespace:      resolved.Namespace,
 		RewriteProfile: resolved.RewriteProfile,
 		OriginalPath:   resolved.OriginalPath,
+		StreamResponse: engine.HasResponseEventHook() && !engine.HasResponseHook(),
 	}
 
 	var shortCircuit *script.Response
@@ -567,6 +592,203 @@ func (h *Handler) serveScripted(w http.ResponseWriter, r *http.Request, resolved
 
 	bytesWritten := h.writeScriptedResponse(w, r, status, respHeader, respBody)
 	h.logAccess(dumpID, namespace, rewriteProfile, r.Method, targetURL.String(), status, time.Since(start), bytesWritten, "")
+}
+
+// serveStreamingScripted applies event-level script hooks to an SSE response
+// without buffering the upstream body. onRequest remains buffered because it
+// may rewrite the inbound JSON body.
+func (h *Handler) serveStreamingScripted(w http.ResponseWriter, r *http.Request, resolved ResolvedTarget, engine *script.Engine) {
+	start := time.Now()
+	dumpID := uint64(0)
+	if h.dumpRequest {
+		dumpID = h.dumpSeq.Add(1)
+	}
+
+	reqBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read inbound request")
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(reqBody))
+	r.ContentLength = int64(len(reqBody))
+	if h.dumpRequest && h.dumpScope.HasReq() {
+		if err := h.dumpIncomingRequest(dumpID, resolved.Namespace, r, reqBody); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read inbound request")
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, "", http.StatusInternalServerError, time.Since(start), 0, err.Error())
+			return
+		}
+	}
+
+	targetURL := resolved.URL
+	header := cloneHeader(r.Header)
+	removeHopByHopHeaders(header)
+	hostOverride := applyHeaderRulesToHeader(header, targetURL.Host, h.headerRules)
+	sreq := &script.Request{Method: r.Method, URL: targetURL.String(), Host: hostOverride, Header: header, Body: reqBody, Namespace: resolved.Namespace, RewriteProfile: resolved.RewriteProfile, OriginalPath: resolved.OriginalPath, StreamResponse: engine.HasResponseEventHook() && !engine.HasResponseHook()}
+	shortCircuit, err := engine.OnRequest(sreq)
+	if err != nil {
+		h.failHook(w, dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), start, err)
+		return
+	}
+	targetURL, err = parseScriptTarget(sreq.URL)
+	if err != nil {
+		h.failHook(w, dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, sreq.URL, start, err)
+		return
+	}
+	if !sreq.StreamResponse {
+		status, respHeader, respBody, statusText, ok := h.obtainResponse(w, r, dumpID, resolved.Namespace, resolved.RewriteProfile, start, sreq, targetURL, shortCircuit)
+		if !ok {
+			return
+		}
+		if engine.HasResponseHook() {
+			sresp := &script.Response{Status: status, Header: cloneHeader(respHeader), Body: respBody}
+			if err := engine.OnResponse(sresp, sreq); err != nil {
+				h.failHook(w, dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), start, err)
+				return
+			}
+			status, respHeader, respBody = sresp.Status, sresp.Header, sresp.Body
+			if respHeader == nil {
+				respHeader = http.Header{}
+			}
+			statusText = strconv.Itoa(status) + " " + http.StatusText(status)
+		}
+		if h.dumpRequest && h.dumpScope.HasResp() {
+			h.dumpScriptedResponse(dumpID, resolved.Namespace, status, statusText, respHeader, respBody)
+		}
+		written := h.writeScriptedResponse(w, r, status, respHeader, respBody)
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), status, time.Since(start), written, "")
+		return
+	}
+
+	var status int
+	var headerOut http.Header
+	var body io.ReadCloser
+	if shortCircuit != nil {
+		status = shortCircuit.Status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		headerOut = shortCircuit.Header
+		body = io.NopCloser(bytes.NewReader(shortCircuit.Body))
+	} else {
+		upstreamReq, err := buildScriptedUpstream(r.Context(), sreq, targetURL)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build upstream request")
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), http.StatusInternalServerError, time.Since(start), 0, err.Error())
+			return
+		}
+		upstreamResp, err := h.client.Do(upstreamReq)
+		if err != nil {
+			s, msg := mapUpstreamError(err)
+			writeError(w, s, msg)
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), s, time.Since(start), 0, err.Error())
+			return
+		}
+		status, headerOut, body = upstreamResp.StatusCode, upstreamResp.Header, upstreamResp.Body
+	}
+	defer body.Close()
+
+	mediaType, _, _ := mime.ParseMediaType(headerOut.Get("Content-Type"))
+	if !strings.EqualFold(mediaType, "text/event-stream") {
+		writeError(w, http.StatusBadGateway, "streaming response hook requires text/event-stream")
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), http.StatusBadGateway, time.Since(start), 0, "streaming response hook requires text/event-stream")
+		return
+	}
+	sresp := &script.Response{Status: status, Header: cloneHeader(headerOut)}
+	stream, err := engine.BeginResponseStream(r.Context(), sresp, sreq)
+	if err != nil {
+		h.failHook(w, dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), start, err)
+		return
+	}
+	defer stream.Close()
+
+	out := w.Header()
+	copyResponseHeaders(out, sresp.Header)
+	removeHopByHopHeaders(out)
+	out.Del("Content-Length")
+	out.Set("Content-Type", "text/event-stream")
+	w.WriteHeader(sresp.Status)
+	flusher, _ := w.(http.Flusher)
+	streamOut := io.Writer(w)
+	var capture *sseCapture
+	if h.dumpRequest && h.dumpScope.HasResp() {
+		capture = &sseCapture{limit: h.maxSSEEventBytes}
+		streamOut = io.MultiWriter(w, capture)
+		defer func() {
+			head := cloneHeader(sresp.Header)
+			if capture.truncated {
+				head.Set("X-Relay-Capture-Truncated", "true")
+			}
+			statusText := strconv.Itoa(sresp.Status) + " " + http.StatusText(sresp.Status)
+			h.dumpScriptedResponse(dumpID, resolved.Namespace, sresp.Status, statusText, head, capture.buf.Bytes())
+		}()
+	}
+	reader := newSSEReader(body, h.maxSSEEventBytes)
+	var written int64
+	eventCount := 0
+	for {
+		frame, readErr := reader.Next()
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, readErr.Error())
+			return
+		}
+		for _, comment := range frame.comments {
+			n, writeErr := writeSSEComment(streamOut, comment)
+			written += int64(n)
+			if writeErr != nil {
+				return
+			}
+		}
+		if frame.event != nil {
+			eventCount++
+			if eventCount > h.maxSSEEventsResponse {
+				h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, "SSE response exceeded event limit")
+				return
+			}
+			events, hookErr := stream.OnEvent(*frame.event, sreq)
+			if hookErr != nil {
+				h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, hookErr.Error())
+				return
+			}
+			for _, event := range events {
+				if sseEventSize(event) > h.maxSSEEventBytes {
+					h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, "stream hook output exceeded event limit")
+					return
+				}
+				n, writeErr := writeSSEEvent(streamOut, event)
+				written += int64(n)
+				if writeErr != nil {
+					return
+				}
+			}
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	events, endErr := stream.End(sreq)
+	if endErr != nil {
+		h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, endErr.Error())
+		return
+	}
+	for _, event := range events {
+		if sseEventSize(event) > h.maxSSEEventBytes {
+			h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, "stream hook output exceeded event limit")
+			return
+		}
+		n, writeErr := writeSSEEvent(streamOut, event)
+		written += int64(n)
+		if writeErr != nil {
+			return
+		}
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	h.logAccess(dumpID, resolved.Namespace, resolved.RewriteProfile, r.Method, targetURL.String(), sresp.Status, time.Since(start), written, "")
 }
 
 // obtainResponse returns the response to relay, either synthesized from a

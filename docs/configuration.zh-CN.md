@@ -123,6 +123,21 @@ timeout = "1500ms"
 reload = "watch"
 ```
 
+## 流式 Rewrite 限制：`[rewrite]`
+
+定义事件级 SSE 响应 Hook 的资源上限：
+
+```toml
+[rewrite]
+max_sse_event_bytes = 1048576
+max_sse_events_per_response = 100000
+```
+
+- `max_sse_event_bytes`：一个上游 SSE 帧可占用的最大字节数，默认 `1048576`，最大 `16777216`。
+- `max_sse_events_per_response`：单个上游响应允许处理的最大 SSE 帧数，默认 `100000`。
+
+这些限制只影响定义了 `onResponseEvent` 的脚本。普通代理和传统 `onResponse` 脚本不受影响。
+
 ## Rewrite Profile：`[rewrite.profiles.<name>]`
 
 Profile 根据 Relay 请求路径选择不同 JavaScript 脚本：
@@ -136,6 +151,11 @@ reload = "off"
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"
 timeout = "300ms"
+reload = "watch"
+
+[rewrite.profiles.openai-compat]
+script = "builtin:rewrite.chat-completions-to-responses.js"
+timeout = "200ms"
 reload = "watch"
 ```
 
@@ -156,6 +176,16 @@ Profile 名称必须匹配：
 ```bash
 curl "http://127.0.0.1:7080/@openai/https://api.example.com/v1/responses"
 curl "http://127.0.0.1:7080/team-a/@mock/https://example.com/healthz"
+```
+
+`openai-compat` 示例将 Chat Completions 请求转为上游 Responses；`stream: true` 时会实时转换 SSE，
+并实时转回 Chat Completions chunks：
+
+```bash
+curl -N http://127.0.0.1:7080/@openai-compat/https://api.openai.com/v1/chat/completions \
+  -H 'Authorization: Bearer $OPENAI_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-5","stream":true,"messages":[{"role":"user","content":"你好"}]}'
 ```
 
 行为说明：

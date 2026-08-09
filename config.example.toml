@@ -1,3 +1,8 @@
+# SSE event-level response hooks use these bounds to avoid unbounded buffering.
+[rewrite]
+max_sse_event_bytes = 1048576
+max_sse_events_per_response = 100000
+
 [rewrite.http]
 # External HTTP calls from JavaScript are disabled by default. When enabled,
 # every target must exactly match one of these scheme/host/port origins.
@@ -21,6 +26,11 @@ reload = "off"
 script = "./plugins/examples/rewrite.mock.js"
 # timeout and reload are optional; omitted values inherit --script-timeout and
 # --script-reload.
+
+[rewrite.profiles.openai-compat]
+script = "builtin:rewrite.chat-completions-to-responses.js"
+timeout = "200ms"
+reload = "watch"
 
 [web]
 # Maximum retained transactions for each namespace, including the default view.

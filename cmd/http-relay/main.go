@@ -248,7 +248,7 @@ func main() {
 		// The TUI always captures full req+resp traffic and owns the screen.
 		dump = true
 		wireScope = relay.DumpScopeReq | relay.DumpScopeResp
-		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry)
+		runTUI(client, addr, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
 		return
 	}
 
@@ -263,18 +263,20 @@ func main() {
 			Timeout: timeoutLabel(*timeout),
 			Version: version,
 		}
-		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, scriptSummary, meta, webOptions, logger, palette)
+		runWeb(client, addr, *webListen, mode, proxySummary, *maskAuth, *timeout, wireScope, headerRules, scriptRegistry, scriptSummary, meta, webOptions, logger, palette, appCfg.Rewrite.MaxSSEEventBytes, appCfg.Rewrite.MaxSSEEventsPerResponse)
 		return
 	}
 
 	handler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:     mode,
-		HeaderRules:    headerRules,
-		DumpRequest:    dump,
-		DumpScope:      wireScope,
-		MaskAuth:       *maskAuth,
-		Palette:        palette,
-		ScriptRegistry: scriptRegistry,
+		TargetMode:           mode,
+		HeaderRules:          headerRules,
+		DumpRequest:          dump,
+		DumpScope:            wireScope,
+		MaskAuth:             *maskAuth,
+		Palette:              palette,
+		ScriptRegistry:       scriptRegistry,
+		MaxSSEEventBytes:     appCfg.Rewrite.MaxSSEEventBytes,
+		MaxSSEEventsResponse: appCfg.Rewrite.MaxSSEEventsPerResponse,
 	})
 
 	server := &http.Server{
@@ -338,18 +340,20 @@ func buildScriptRegistry(cfg appconfig.Config, defaultEngine *relayscript.Engine
 // runTUI starts the relay server in the background and runs the interactive
 // TUI on the main goroutine (it owns the terminal). It returns when the user
 // quits the TUI.
-func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry) {
+func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, maxSSEEventBytes, maxSSEEventsResponse int) {
 	header := tuiHeader(addr, mode, proxySummary, timeout)
 	prog, reporter := tui.New(header)
 
 	handler := relay.NewHandlerWithOptions(client, log.Default(), relay.HandlerOptions{
-		TargetMode:     mode,
-		HeaderRules:    headerRules,
-		DumpRequest:    true,
-		DumpScope:      wireScope,
-		MaskAuth:       maskAuth,
-		Reporter:       reporter,
-		ScriptRegistry: scripts,
+		TargetMode:           mode,
+		HeaderRules:          headerRules,
+		DumpRequest:          true,
+		DumpScope:            wireScope,
+		MaskAuth:             maskAuth,
+		Reporter:             reporter,
+		ScriptRegistry:       scripts,
+		MaxSSEEventBytes:     maxSSEEventBytes,
+		MaxSSEEventsResponse: maxSSEEventsResponse,
 	})
 
 	server := &http.Server{
@@ -387,18 +391,20 @@ func runTUI(client *http.Client, addr string, mode relay.TargetMode, proxySummar
 // runWeb starts the relay proxy server and the web-UI server side by side, each
 // on its own listener (the proxy port treats any path as a target URL, so the
 // UI cannot share it). It returns when either server stops.
-func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette) {
+func runWeb(client *http.Client, addr, webAddr string, mode relay.TargetMode, proxySummary string, maskAuth bool, timeout time.Duration, wireScope relay.DumpScope, headerRules []relay.HeaderRule, scripts *relayscript.Registry, scriptSummary string, meta web.Meta, webOptions web.Options, logger *log.Logger, palette relay.Palette, maxSSEEventBytes, maxSSEEventsResponse int) {
 	webOptions.Logger = logger
 	webHandler, reporter := web.New(meta, webOptions)
 
 	proxyHandler := relay.NewHandlerWithOptions(client, logger, relay.HandlerOptions{
-		TargetMode:     mode,
-		HeaderRules:    headerRules,
-		DumpRequest:    true,
-		DumpScope:      wireScope,
-		MaskAuth:       maskAuth,
-		Reporter:       reporter,
-		ScriptRegistry: scripts,
+		TargetMode:           mode,
+		HeaderRules:          headerRules,
+		DumpRequest:          true,
+		DumpScope:            wireScope,
+		MaskAuth:             maskAuth,
+		Reporter:             reporter,
+		ScriptRegistry:       scripts,
+		MaxSSEEventBytes:     maxSSEEventBytes,
+		MaxSSEEventsResponse: maxSSEEventsResponse,
 	})
 
 	proxyServer := &http.Server{Addr: addr, Handler: proxyHandler, ReadHeaderTimeout: 10 * time.Second}

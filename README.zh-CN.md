@@ -8,11 +8,14 @@
 [![Release](https://img.shields.io/github/v/release/onewesong/http-relay)](https://github.com/onewesong/http-relay/releases)
 [![Docker Image](https://img.shields.io/badge/ghcr.io-onewesong%2Fhttp--relay-blue)](https://github.com/onewesong/http-relay/pkgs/container/http-relay)
 [![License](https://img.shields.io/github/license/onewesong/http-relay)](https://github.com/onewesong/http-relay/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-0f766e)](https://onewesong.github.io/http-relay/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/onewesong/http-relay)
 
 [English](./README.md) | 简体中文
 
 </div>
+
+📚 [完整中文文档](https://onewesong.github.io/http-relay/)
 
 `http-relay` 监听本地 HTTP，请求格式如下：
 

@@ -5,3 +5,4 @@ config.toml
 node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+report.xml

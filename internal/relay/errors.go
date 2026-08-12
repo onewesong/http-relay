@@ -12,7 +12,11 @@ const relayErrorSource = "from http-relay"
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(fmt.Sprintf("%s (%s)\n", msg, relayErrorSource)))
+	_, _ = w.Write(errorBody(msg))
+}
+
+func errorBody(msg string) []byte {
+	return []byte(fmt.Sprintf("%s (%s)\n", msg, relayErrorSource))
 }
 
 func mapUpstreamError(err error) (int, string) {

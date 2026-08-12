@@ -1,7 +1,7 @@
 'use strict';
 
 import { tryParseJSON } from './preview/core.mjs';
-import { createBodyViewer, renderJSON } from './preview/viewer.mjs';
+import { createBodyViewer, createCopyButton, renderJSON } from './preview/viewer.mjs';
 import { buildConversations } from './conversation.mjs';
 
 const txns = new Map();   // seq -> transaction
@@ -435,7 +435,12 @@ function renderRequestBody(body) {
   const meta = document.createElement('div');
   meta.className = 'bodymeta';
   meta.textContent = `body=${formatBytes(body.size)}${body.truncated ? ' (truncated)' : ''}`;
-  wrap.appendChild(meta);
+  const toolbar = document.createElement('div');
+  toolbar.className = 'viewer-toolbar';
+  toolbar.append(meta, document.createElement('span'));
+  toolbar.lastChild.className = 'viewer-spacer';
+  toolbar.appendChild(createCopyButton(body.base64 !== undefined ? body.base64 || '' : body.text || ''));
+  wrap.appendChild(toolbar);
 
   if (body.base64 !== undefined) {
     const note = document.createElement('pre');

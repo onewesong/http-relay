@@ -175,6 +175,7 @@ main {
   margin-bottom: 4px;
 }
 .viewer-toolbar .bodymeta { margin: 0; }
+.copy-button { margin-left: 0; }
 .viewer-spacer { flex: 1; }
 .preview-badge {
   padding: 1px 6px;

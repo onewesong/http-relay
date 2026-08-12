@@ -36,10 +36,7 @@ build:
 	go build -trimpath -ldflags="-s -w" -o $(AUTH_BIN) $(AUTH_CMD)
 
 run:
-	go run $(CMD)
-
-run-example:
-	go run $(CMD) -w --script $(EXAMPLE_SCRIPT) --script-reload watch
+	go run $(CMD) --web
 
 clean:
 	rm -rf $(BIN_DIR)

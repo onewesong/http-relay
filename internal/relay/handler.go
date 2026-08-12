@@ -193,15 +193,13 @@ func NewHandlerWithOptions(client *http.Client, logger *log.Logger, opts Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resolved, err := h.targetMode.Resolve(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		h.logAccess(0, "", "", r.Method, "", http.StatusBadRequest, 0, 0, err.Error())
+		h.reject(w, 0, "", "", r.Method, "", http.StatusBadRequest, err.Error())
 		return
 	}
 	if h.targetPolicy != nil && h.targetMode.kind == TargetModeAbsoluteURL {
 		if err := h.targetPolicy.Validate(r.Context(), resolved.URL); err != nil {
 			status, msg := mapUpstreamError(err)
-			writeError(w, status, msg)
-			h.logAccess(0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), status, 0, 0, err.Error())
+			h.reject(w, 0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), status, msg)
 			return
 		}
 		r = r.WithContext(withTargetPolicy(r.Context(), h.targetPolicy))
@@ -211,8 +209,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		engine, ok = h.scripts.Lookup(resolved.RewriteProfile)
 		if !ok {
-			writeError(w, http.StatusNotFound, "rewrite profile not found")
-			h.logAccess(0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), http.StatusNotFound, 0, 0, "rewrite profile not found")
+			h.reject(w, 0, resolved.Namespace, resolved.RewriteProfile, r.Method, resolved.URL.String(), http.StatusNotFound, "rewrite profile not found")
 			return
 		}
 	}
@@ -221,6 +218,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.servePlain(w, r, resolved)
+}
+
+// reject writes a relay-generated error and, when dumping is enabled, exposes
+// the exact response body through the configured reporter as well.
+func (h *Handler) reject(w http.ResponseWriter, seq uint64, namespace, rewriteProfile, method, target string, status int, msg string) {
+	if h.dumpRequest && seq == 0 {
+		seq = h.dumpSeq.Add(1)
+	}
+	body := errorBody(msg)
+	if h.dumpRequest && h.dumpScope.HasResp() {
+		h.dumpScriptedResponse(seq, namespace, status, fmt.Sprintf("%d %s", status, http.StatusText(status)), http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, body)
+	}
+	writeError(w, status, msg)
+	h.logAccess(seq, namespace, rewriteProfile, method, target, status, 0, int64(len(body)), msg)
 }
 
 // servePlain relays a request with no script hooks active. It is the original,

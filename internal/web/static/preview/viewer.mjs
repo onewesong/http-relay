@@ -41,6 +41,7 @@ export function createBodyViewer(input, options = {}) {
     const spacer = document.createElement('span');
     spacer.className = 'viewer-spacer';
     toolbar.appendChild(spacer);
+    toolbar.appendChild(createCopyButton(copyPayload(context)));
     toolbar.appendChild(modeButton('Preview', 'preview', plugin));
     toolbar.appendChild(modeButton('Raw', 'raw', true));
     root.appendChild(toolbar);
@@ -99,6 +100,47 @@ function renderRaw(context) {
     pre.textContent = context.text;
   }
   return pre;
+}
+
+function copyPayload(context) {
+  if (context.base64 !== undefined) return context.base64 || '';
+  return context.text || '';
+}
+
+export function createCopyButton(text) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'mode-button copy-button';
+  button.textContent = 'Copy';
+  button.title = 'Copy body';
+  button.onclick = async () => {
+    try {
+      await copyText(text);
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+    } catch {
+      button.textContent = 'Copy failed';
+      setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+    }
+  };
+  return button;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand('copy');
+  area.remove();
+  if (!copied) throw new Error('copy failed');
 }
 
 function badge(label) {

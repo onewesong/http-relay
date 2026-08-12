@@ -1,6 +1,6 @@
 ---
 name: write-http-relay-js
-description: 编写、修改、审查和调试 http-relay JavaScript 流量改写脚本，并配置默认脚本、路径绑定的 rewrite Profile 或受控外部 HTTP API。用于用户要求按请求或响应内容改写 URL、Header、Body、状态码，创建本地 Mock/短路响应，通过 relay.http.request 调用白名单 API，按 namespace 或 Profile 区分逻辑，排查脚本 Hook 超时或运行错误，以及新增或更新 .js 改写示例时。
+description: 编写 http-relay JavaScript 扩展时使用
 ---
 
 # 编写 http-relay JavaScript 改写脚本

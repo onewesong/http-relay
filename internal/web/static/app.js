@@ -462,13 +462,21 @@ function renderRequestBody(body) {
 }
 
 function renderResponseBody(transaction, head, body) {
+  const conversation = conversations.find((candidate) => candidate.transactionIds.includes(transaction.seq));
   return createBodyViewer({ transaction, target: transaction.target, head, body }, {
     mode: responseViewMode,
+    onViewConversation: conversation ? () => viewConversation(conversation.id) : undefined,
     onModeChange: (mode) => {
       responseViewMode = mode;
       try { sessionStorage.setItem('http-relay.response-view-mode', mode); } catch { /* storage may be disabled */ }
     },
   });
+}
+
+function viewConversation(id) {
+  if (!conversations.some((conversation) => conversation.id === id)) return;
+  selectedConversation = id;
+  setTrafficView('conversations');
 }
 
 function loadResponseViewMode() {

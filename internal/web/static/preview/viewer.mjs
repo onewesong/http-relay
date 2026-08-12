@@ -41,10 +41,21 @@ export function createBodyViewer(input, options = {}) {
     const spacer = document.createElement('span');
     spacer.className = 'viewer-spacer';
     toolbar.appendChild(spacer);
-    toolbar.appendChild(createCopyButton(copyPayload(context)));
+    if (typeof options.onViewConversation === 'function') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'mode-button conversation-button';
+      button.textContent = 'View conversation';
+      button.title = 'Open the conversation containing this request';
+      button.onclick = options.onViewConversation;
+      toolbar.appendChild(button);
+    }
     toolbar.appendChild(modeButton('Preview', 'preview', plugin));
     toolbar.appendChild(modeButton('Raw', 'raw', true));
     root.appendChild(toolbar);
+
+    const content = document.createElement('div');
+    content.className = 'viewer-content';
 
     if (context.truncated) {
       const warning = document.createElement('div');
@@ -54,20 +65,26 @@ export function createBodyViewer(input, options = {}) {
     }
 
     if (mode === 'raw' || !plugin) {
-      if (mode === 'preview' && !plugin) root.appendChild(note('No preview plugin matched. Showing raw response.'));
-      root.appendChild(renderRaw(context));
+      if (mode === 'preview' && !plugin) content.appendChild(note('No preview plugin matched. Showing raw response.'));
+      content.appendChild(renderRaw(context));
+      content.appendChild(createCopyButton(copyPayload(context)));
+      root.appendChild(content);
       return;
     }
     try {
-      root.appendChild(plugin.render(context));
+      content.appendChild(plugin.render(context));
+      content.appendChild(createCopyButton(copyPayload(context)));
+      root.appendChild(content);
     } catch (error) {
       root.querySelectorAll('.mode-button').forEach((button) => {
         const active = button.textContent === 'Raw';
         button.classList.toggle('active', active);
         button.setAttribute('aria-pressed', String(active));
       });
-      root.appendChild(note(`Preview failed: ${error?.message || error}. Showing raw response.`, 'preview-error'));
-      root.appendChild(renderRaw(context));
+      content.appendChild(note(`Preview failed: ${error?.message || error}. Showing raw response.`, 'preview-error'));
+      content.appendChild(renderRaw(context));
+      content.appendChild(createCopyButton(copyPayload(context)));
+      root.appendChild(content);
     }
   };
 
@@ -276,7 +293,7 @@ function renderSSE(context) {
   root.className = 'sse-preview';
   if (merged.recognized) {
     const heading = document.createElement('h4');
-    heading.textContent = 'Merged OpenAI response';
+    heading.textContent = 'OpenAI fields';
     root.appendChild(heading);
     for (const choice of merged.choices) root.appendChild(renderChoice(choice));
     if (merged.usage) {

@@ -36,7 +36,7 @@ build:
 	go build -trimpath -ldflags="-s -w" -o $(AUTH_BIN) $(AUTH_CMD)
 
 run:
-	go run $(CMD) --web
+	go run $(CMD) --web -allow-private-targets
 
 clean:
 	rm -rf $(BIN_DIR)

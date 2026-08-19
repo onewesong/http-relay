@@ -472,12 +472,21 @@ func parseRewriteProfileSegment(segment string) (string, error) {
 
 func hasHTTPPrefix(raw string) bool {
 	lower := strings.ToLower(raw)
-	return strings.HasPrefix(lower, "http:/") || strings.HasPrefix(lower, "https:/")
+	return strings.HasPrefix(lower, "http:/") || strings.HasPrefix(lower, "https:/") ||
+		strings.HasPrefix(lower, "http%3a/") || strings.HasPrefix(lower, "https%3a/")
 }
 
 func normalizeTargetURL(raw string) string {
 	lower := strings.ToLower(raw)
 	for _, scheme := range []string{"http", "https"} {
+		encodedPrefix := scheme + "%3a/"
+		if strings.HasPrefix(lower, encodedPrefix) {
+			// Some clients escape only the scheme separator while leaving the
+			// slashes intact, e.g. https%3A//example.com. Decode that delimiter
+			// without unescaping the remainder of the target URL.
+			raw = raw[:len(scheme)] + ":" + raw[len(scheme)+3:]
+			lower = strings.ToLower(raw)
+		}
 		prefix := scheme + ":/"
 		if strings.HasPrefix(lower, prefix) && !strings.HasPrefix(lower, prefix+"/") {
 			return raw[:len(scheme)+1] + "//" + raw[len(prefix):]

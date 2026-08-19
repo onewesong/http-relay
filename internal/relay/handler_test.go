@@ -22,6 +22,7 @@ func TestParseTargetURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid", path: "/https://example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
+		{name: "escaped scheme separator", path: "/https%3A//example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
 		{name: "flattened scheme slash", path: "/https:/api.smith.langchain.com/info", want: "https://api.smith.langchain.com/info", wantErr: false},
 		{name: "namespace", path: "/team-a/https://example.com/a?x=1", want: "https://example.com/a?x=1", wantErr: false},
 		{name: "missing scheme", path: "/example.com", wantErr: true},
@@ -62,6 +63,7 @@ func TestParseNamespacedTargetURL(t *testing.T) {
 		wantErr       bool
 	}{
 		{path: "/https://example.com", wantTarget: "https://example.com"},
+		{path: "/team-a/https%3A//example.com/v1?q=go", wantTarget: "https://example.com/v1?q=go", wantNamespace: "team-a"},
 		{path: "/team-a/https://example.com/v1?q=go", wantTarget: "https://example.com/v1?q=go", wantNamespace: "team-a"},
 		{path: "/team_a/http:/example.com", wantTarget: "http://example.com", wantNamespace: "team_a"},
 		{path: "/bad%2Fname/https://example.com", wantErr: true},

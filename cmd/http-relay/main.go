@@ -106,6 +106,7 @@ func main() {
 	for _, warning := range configWarnings {
 		logger.Printf("config warning: %s", warning)
 	}
+	allowPrivate := *allowPrivateTargets || appCfg.Relay.AllowPrivateTargets
 	legacyWebAuthKey := os.Getenv("WEB_AUTH_KEY")
 	webOptions, err := resolveWebOptions(appCfg, legacyWebAuthKey, *webTrustForwarded)
 	if err != nil {
@@ -131,7 +132,7 @@ func main() {
 		logger.Fatalf("invalid mode: %v", err)
 	}
 	var targetPolicy *relay.TargetPolicy
-	if mode.IsRegular() && !*allowPrivateTargets {
+	if mode.IsRegular() && !allowPrivate {
 		targetPolicy = relay.NewTargetPolicy()
 	}
 
@@ -300,7 +301,7 @@ func main() {
 func resolveWebOptions(cfg appconfig.Config, legacyKey string, trustForwarded bool) (web.Options, error) {
 	opts := web.Options{
 		AuthKey: legacyKey, MaxTransactionsPerNamespace: cfg.Web.MaxTransactionsPerNamespace,
-		TrustForwardedHeaders: trustForwarded,
+		TrustForwardedHeaders: trustForwarded, MCPEnabled: cfg.Web.MCP.Enabled,
 	}
 	if cfg.Web.Auth.Mode != "jwt" {
 		return opts, nil

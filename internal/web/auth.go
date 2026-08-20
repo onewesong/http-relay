@@ -36,6 +36,7 @@ type Options struct {
 	JWTAuth                     *appconfig.AuthConfig
 	Logger                      *log.Logger
 	TrustForwardedHeaders       bool
+	MCPEnabled                  bool
 }
 
 type authenticator struct {
@@ -53,6 +54,7 @@ type authContext struct {
 	enabled               bool
 	expires               *time.Time
 	admin                 bool
+	namespace             string
 	trustForwardedHeaders bool
 }
 
@@ -239,6 +241,18 @@ func (a *authenticator) verifyJWT(token string) (authjwt.Claims, error) {
 		Secret: a.jwt.SecretBytes, Issuer: a.jwt.Issuer, Audience: a.jwt.Audience,
 		AllowPermanent: a.jwt.AllowPermanentTokens, Now: a.now(),
 	})
+}
+
+func bearerToken(r *http.Request) (string, bool) {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	if raw == "" {
+		return "", false
+	}
+	parts := strings.Fields(raw)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
 }
 
 func (a *authenticator) validJWTSession(r *http.Request, namespace string, adminOnly bool) (authjwt.Claims, bool) {

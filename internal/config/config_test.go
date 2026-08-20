@@ -37,6 +37,14 @@ func TestMaxTransactionsPerNamespace(t *testing.T) {
 	}
 }
 
+func TestAllowPrivateTargets(t *testing.T) {
+	path := writeConfig(t, "[relay]\nallow_private_targets = true\n")
+	cfg, _, err := Load(path)
+	if err != nil || !cfg.Relay.AllowPrivateTargets {
+		t.Fatalf("allow_private_targets=%t err=%v", cfg.Relay.AllowPrivateTargets, err)
+	}
+}
+
 func TestRewriteProfiles(t *testing.T) {
 	path := writeConfig(t, `[rewrite.profiles.openai]
 script = "./scripts/openai.js"

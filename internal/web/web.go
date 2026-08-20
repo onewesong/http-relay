@@ -43,6 +43,16 @@ func New(meta Meta, options ...Options) (http.Handler, relay.Reporter) {
 	mux.Handle("GET /events", auth.protect(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/transactions", auth.protect(http.HandlerFunc(s.handleTransactions)))
 	mux.Handle("DELETE /api/transactions", auth.protect(http.HandlerFunc(s.handleClearTransactions)))
+	if opts.MCPEnabled {
+		mcpHandler := auth.mcpMiddleware(auth.mcpHandler(s, meta.Version))
+		mux.Handle("GET /mcp", mcpHandler)
+		mux.Handle("POST /mcp", mcpHandler)
+		mux.Handle("DELETE /mcp", mcpHandler)
+	} else {
+		mux.Handle("GET /mcp", http.NotFoundHandler())
+		mux.Handle("POST /mcp", http.NotFoundHandler())
+		mux.Handle("DELETE /mcp", http.NotFoundHandler())
+	}
 	newAdminServer(s, auth, static, opts.Logger).routes(mux)
 
 	return namespaceRouter(mux, auth), &webReporter{store: s}

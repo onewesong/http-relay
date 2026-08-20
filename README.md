@@ -179,6 +179,17 @@ public-demo = false
 WEB_MAX_TRANSACTIONS_PER_NAMESPACE=500 http-relay --config ./config.toml --web
 ```
 
+### MCP capture queries
+
+Enable the read-only MCP endpoint on the Web listener:
+
+```toml
+[web.mcp]
+enabled = true
+```
+
+The endpoint is `/mcp` and accepts the Web JWT as `Authorization: Bearer <JWT>`. It exposes `list_transactions`, `get_transaction`, `search_transactions`, and `analyze_transactions`; namespace-scoped tokens remain bound to their JWT namespace while admin tokens may select another namespace.
+
 The secret must be unpadded Base64URL for at least 32 random bytes. Run `chmod 600 http-relay.toml` when embedding it; using `WEB_AUTH_JWT_SECRET` is preferable in deployments. JWT mode cannot be combined with `WEB_AUTH_KEY`.
 
 Start Web mode and create an offline management token:
@@ -248,6 +259,15 @@ proxy_set_header X-Forwarded-Host $host;
 ```
 
 ## Traffic Dump
+
+Regular mode blocks targets resolving to local, private, or otherwise reserved addresses by default. Enable private targets explicitly when required:
+
+```toml
+[relay]
+allow_private_targets = true
+```
+
+The `--allow-private-targets` command-line flag remains available and enables the same behavior for a single run.
 
 Enable request/response dump:
 

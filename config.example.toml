@@ -1,4 +1,9 @@
 # SSE event-level response hooks use these bounds to avoid unbounded buffering.
+[relay]
+# Allow regular-mode targets resolving to private or local addresses.
+# Keep false unless this deployment explicitly needs private targets.
+allow_private_targets = false
+
 [rewrite]
 max_sse_event_bytes = 1048576
 max_sse_events_per_response = 100000
@@ -45,6 +50,10 @@ reload = "off"
 [web]
 # Maximum retained transactions for each namespace, including the default view.
 max_transactions_per_namespace = 100
+
+[web.mcp]
+# Expose read-only capture tools at /mcp on the Web listener.
+enabled = false
 
 [web.auth]
 mode = "jwt"

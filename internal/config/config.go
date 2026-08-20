@@ -65,6 +65,11 @@ func (d *OptionalDuration) UnmarshalText(text []byte) error {
 type Config struct {
 	Web     WebConfig     `toml:"web"`
 	Rewrite RewriteConfig `toml:"rewrite"`
+	Relay   RelayConfig   `toml:"relay"`
+}
+
+type RelayConfig struct {
+	AllowPrivateTargets bool `toml:"allow_private_targets"`
 }
 
 type RewriteConfig struct {
@@ -95,6 +100,11 @@ type RewriteProfile struct {
 type WebConfig struct {
 	MaxTransactionsPerNamespace int        `toml:"max_transactions_per_namespace"`
 	Auth                        AuthConfig `toml:"auth"`
+	MCP                         MCPConfig  `toml:"mcp"`
+}
+
+type MCPConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 type AuthConfig struct {

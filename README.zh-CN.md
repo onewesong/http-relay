@@ -170,6 +170,17 @@ public-demo = false
 WEB_MAX_TRANSACTIONS_PER_NAMESPACE=500 http-relay --config ./config.toml --web
 ```
 
+### MCP 抓包查询
+
+在 Web 监听器上启用只读 MCP：
+
+```toml
+[web.mcp]
+enabled = true
+```
+
+端点为 `/mcp`，使用 Web JWT 通过 `Authorization: Bearer <JWT>` 认证。提供 `list_transactions`、`get_transaction`、`search_transactions` 和 `analyze_transactions` 工具。普通 namespace Token 始终绑定其 JWT namespace；管理员 Token 可按参数查询其他 namespace。返回数据沿用 Web transaction 模型和正文截断/脱敏策略。
+
 Secret 必须是至少 32 字节随机数据的无 padding Base64URL 编码。配置内嵌 Secret 时应执行 `chmod 600 http-relay.toml`；生产环境更推荐通过 `WEB_AUTH_JWT_SECRET` 覆盖。JWT 模式不能与 `WEB_AUTH_KEY` 同时使用。
 
 启动 Web，并离线创建管理 Token：
@@ -239,6 +250,15 @@ proxy_set_header X-Forwarded-Host $host;
 ```
 
 ## 抓包输出
+
+常规模式默认阻止解析到本机、私网或保留地址的目标。如确实需要访问私有目标，可在配置中显式开启：
+
+```toml
+[relay]
+allow_private_targets = true
+```
+
+命令行参数 `--allow-private-targets` 仍然可用，并会覆盖默认的安全限制。
 
 开启请求/响应转储：
 

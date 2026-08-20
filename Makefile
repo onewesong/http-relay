@@ -17,7 +17,7 @@ help:
 	@echo "  make test          Run tests"
 	@echo "  make build         Build $(APP) and $(AUTH_APP) into $(BIN_DIR)"
 	@echo "  make run           Run $(APP) locally"
-	@echo "  make run-example   Run $(APP) with the example rewrite script (hot-reload)"
+	@echo "  make run_with_config Run $(APP) with config.toml"
 	@echo "  make clean         Remove build output"
 	@echo "  make docker-build  Build Docker image"
 
@@ -37,6 +37,9 @@ build:
 
 run:
 	go run $(CMD) --web -allow-private-targets
+
+run_with_config:
+	go run $(CMD) --web -config ./config.toml
 
 clean:
 	rm -rf $(BIN_DIR)

@@ -2,12 +2,26 @@ package web
 
 import (
 	"encoding/json"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	appconfig "github.com/onewesong/http-relay/internal/config"
 )
+
+type TransactionFilter struct {
+	Method         string
+	TargetContains string
+	Status         *int
+	StatusMin      *int
+	StatusMax      *int
+	HasError       *bool
+	Done           *bool
+	From           *time.Time
+	To             *time.Time
+}
 
 const (
 	// defaultMaxTxnsPerNamespace bounds each namespace independently; oldest
@@ -150,6 +164,62 @@ func (s *store) subscribe(namespace string) (ch <-chan []byte, replay [][]byte, 
 
 // transactions returns a snapshot of retained history for the JSON API.
 func (s *store) transactions(namespace string) []*Transaction {
+	return s.query(namespace, TransactionFilter{}, 0)
+}
+
+func cloneTransaction(t *Transaction) *Transaction {
+	cp := *t
+	if t.ReqBody != nil {
+		b := *t.ReqBody
+		cp.ReqBody = &b
+	}
+	if t.RespBody != nil {
+		b := *t.RespBody
+		cp.RespBody = &b
+	}
+	return &cp
+}
+
+func (s *store) transaction(namespace string, seq uint64) (*Transaction, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.byID[seq]
+	if !ok || t.Namespace != namespace {
+		return nil, false
+	}
+	return cloneTransaction(t), true
+}
+
+func (s *store) allTransactions(filter TransactionFilter, limit int) []*Transaction {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Transaction, 0)
+	for _, order := range s.orders {
+		for i := len(order) - 1; i >= 0; i-- {
+			t := s.byID[order[i]]
+			if filter.Method != "" && !strings.EqualFold(t.Method, filter.Method) ||
+				filter.TargetContains != "" && !strings.Contains(strings.ToLower(t.Target), strings.ToLower(filter.TargetContains)) ||
+				filter.Status != nil && t.Status != *filter.Status || filter.StatusMin != nil && t.Status < *filter.StatusMin ||
+				filter.StatusMax != nil && t.Status > *filter.StatusMax || filter.HasError != nil && ((*filter.HasError && t.Err == "") || (!*filter.HasError && t.Err != "")) ||
+				filter.Done != nil && t.Done != *filter.Done || filter.From != nil && t.At.Before(*filter.From) || filter.To != nil && t.At.After(*filter.To) {
+				continue
+			}
+			out = append(out, cloneTransaction(t))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At.Equal(out[j].At) {
+			return out[i].Seq > out[j].Seq
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (s *store) query(namespace string, filter TransactionFilter, limit int) []*Transaction {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -157,8 +227,38 @@ func (s *store) transactions(namespace string) []*Transaction {
 	out := make([]*Transaction, 0, len(order))
 	for i := len(order) - 1; i >= 0; i-- {
 		id := order[i]
-		cp := *s.byID[id] // shallow copy; Body pointers are immutable once set
-		out = append(out, &cp)
+		t := s.byID[id]
+		if filter.Method != "" && !strings.EqualFold(t.Method, filter.Method) {
+			continue
+		}
+		if filter.TargetContains != "" && !strings.Contains(strings.ToLower(t.Target), strings.ToLower(filter.TargetContains)) {
+			continue
+		}
+		if filter.Status != nil && t.Status != *filter.Status {
+			continue
+		}
+		if filter.StatusMin != nil && t.Status < *filter.StatusMin {
+			continue
+		}
+		if filter.StatusMax != nil && t.Status > *filter.StatusMax {
+			continue
+		}
+		if filter.HasError != nil && ((*filter.HasError && t.Err == "") || (!*filter.HasError && t.Err != "")) {
+			continue
+		}
+		if filter.Done != nil && t.Done != *filter.Done {
+			continue
+		}
+		if filter.From != nil && t.At.Before(*filter.From) {
+			continue
+		}
+		if filter.To != nil && t.At.After(*filter.To) {
+			continue
+		}
+		out = append(out, cloneTransaction(t))
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 	}
 	return out
 }

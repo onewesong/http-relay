@@ -7,8 +7,6 @@ Profile 允许客户端通过路径选择不同改写逻辑，适合在同一个
 ```toml
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "500ms"
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"

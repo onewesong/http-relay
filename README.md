@@ -383,9 +383,6 @@ paths are resolved from the configuration file directory):
 ```toml
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "500ms"
-# Built-in scripts are embedded in the binary and cannot be hot-reloaded.
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"

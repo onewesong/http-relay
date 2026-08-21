@@ -327,9 +327,6 @@ Profile 时使用的默认脚本。请求和响应字段可原地修改；
 ```toml
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "500ms"
-# 内置脚本已编入二进制，不支持热更新。
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"

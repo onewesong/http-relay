@@ -145,8 +145,6 @@ Profile 根据 Relay 请求路径选择不同 JavaScript 脚本：
 ```toml
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "500ms"
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"
@@ -155,18 +153,12 @@ reload = "watch"
 
 [rewrite.profiles.openai-compat]
 script = "builtin:rewrite.chat-completions-to-responses.js"
-timeout = "200ms"
-reload = "watch"
 
 [rewrite.profiles.anthropic-compat]
 script = "builtin:rewrite.anthropic-messages-to-responses.js"
-timeout = "200ms"
-reload = "off"
 
 [rewrite.profiles.anthropic-chat-compat]
 script = "builtin:rewrite.anthropic-messages-to-chat-completions.js"
-timeout = "200ms"
-reload = "off"
 ```
 
 | 字段 | 必填 | 默认行为 | 说明 |
@@ -356,8 +348,6 @@ allow_private_networks = false
 
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "1500ms"
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"

@@ -23,14 +23,9 @@ allow_private_networks = false
 
 [rewrite.profiles.openai]
 script = "builtin:rewrite.openai.js"
-timeout = "500ms"
-# 内置脚本已编入二进制，不支持热更新。
-reload = "off"
 
 [rewrite.profiles.rate-limit-529]
 script = "builtin:rewrite.status-429-to-529.js"
-timeout = "200ms"
-reload = "off"
 
 [rewrite.profiles.mock]
 script = "./plugins/examples/rewrite.mock.js"
@@ -39,18 +34,12 @@ script = "./plugins/examples/rewrite.mock.js"
 
 [rewrite.profiles.openai-compat]
 script = "builtin:rewrite.chat-completions-to-responses.js"
-timeout = "200ms"
-reload = "watch"
 
 [rewrite.profiles.anthropic-compat]
 script = "builtin:rewrite.anthropic-messages-to-responses.js"
-timeout = "200ms"
-reload = "off"
 
 [rewrite.profiles.anthropic-chat-compat]
 script = "builtin:rewrite.anthropic-messages-to-chat-completions.js"
-timeout = "200ms"
-reload = "off"
 
 [web]
 # Maximum retained transactions for each namespace, including the default view.

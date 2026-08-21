@@ -17,6 +17,18 @@ func TestReadBuiltIn(t *testing.T) {
 	}
 }
 
+func TestReadBuiltInStatus429To529(t *testing.T) {
+	t.Parallel()
+
+	source, err := ReadBuiltIn("rewrite.status-429-to-529.js")
+	if err != nil {
+		t.Fatalf("ReadBuiltIn: %v", err)
+	}
+	if !strings.Contains(string(source), "function onResponse") {
+		t.Fatalf("embedded script is missing onResponse: %s", source)
+	}
+}
+
 func TestReadBuiltInChatCompletionsCompatibility(t *testing.T) {
 	t.Parallel()
 

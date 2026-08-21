@@ -8,7 +8,7 @@ AUTH_BIN := $(BIN_DIR)/$(AUTH_APP)
 VERSION ?= dev
 EXAMPLE_SCRIPT := examples/relay.example.js
 
-.PHONY: help fmt vet test build run run-example clean docker-build
+.PHONY: help fmt vet test build run clean docker-build
 
 help:
 	@echo "Available targets:"

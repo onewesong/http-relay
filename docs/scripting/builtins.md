@@ -11,6 +11,17 @@ timeout = "500ms"
 reload = "off"
 ```
 
+## 429 映射为 529
+
+将上游的 `429 Too Many Requests` 响应状态码改写为 `529`，响应头和正文保持不变：
+
+```toml
+[rewrite.profiles.rate-limit-529]
+script = "builtin:rewrite.status-429-to-529.js"
+timeout = "200ms"
+reload = "off"
+```
+
 ## Chat Completions 转 Responses
 
 ```toml

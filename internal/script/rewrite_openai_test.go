@@ -82,6 +82,43 @@ func TestRewriteOpenAI_AddsWebSearchTool(t *testing.T) {
 	}
 }
 
+func TestRewriteStatus429To529(t *testing.T) {
+	t.Parallel()
+
+	source, err := builtinplugins.ReadBuiltIn("rewrite.status-429-to-529.js")
+	if err != nil {
+		t.Fatalf("ReadBuiltIn: %v", err)
+	}
+	engine, err := New(Options{Path: "builtin:rewrite.status-429-to-529.js", Source: string(source)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	req := &Request{Method: "GET", URL: "https://api.example.com/", Header: http.Header{}}
+
+	for _, tt := range []struct {
+		name     string
+		status   int
+		wantCode int
+	}{
+		{name: "maps 429", status: http.StatusTooManyRequests, wantCode: 529},
+		{name: "leaves 200 unchanged", status: http.StatusOK, wantCode: http.StatusOK},
+		{name: "leaves 500 unchanged", status: http.StatusInternalServerError, wantCode: http.StatusInternalServerError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &Response{Status: tt.status, Header: http.Header{}, Body: []byte("upstream")}
+			if err := engine.OnResponse(resp, req); err != nil {
+				t.Fatalf("OnResponse: %v", err)
+			}
+			if resp.Status != tt.wantCode {
+				t.Fatalf("status = %d, want %d", resp.Status, tt.wantCode)
+			}
+			if string(resp.Body) != "upstream" {
+				t.Fatalf("body changed to %q", resp.Body)
+			}
+		})
+	}
+}
+
 func TestRewriteChatCompletionsToResponsesStream(t *testing.T) {
 	t.Parallel()
 	source, err := builtinplugins.ReadBuiltIn("rewrite.chat-completions-to-responses.js")

@@ -27,7 +27,7 @@ test('weekly aggregate buckets become a continuous daily cumulative history', ()
   assert.equal(validateHistory(history), history);
 });
 
-test('invalid weekly data and invalid current counts are rejected', () => {
+test('current partial week is clipped to the generated date', () => {\n  const history = historyFromWeeklyBuckets([week('2026-01-04', [0, 1, 2, 3, 4, 5, 6])], 3, '2026-01-06');\n  assert.deepEqual(history.points, [['2026-01-04', 0], ['2026-01-05', 1], ['2026-01-06', 3]]);\n  assert.equal(history.points.at(-1)[0], history.generatedAt);\n});\n\ntest('invalid weekly data and invalid current counts are rejected', () => {
   assert.throws(() => historyFromWeeklyBuckets([], 0));
   assert.throws(() => historyFromWeeklyBuckets([week('2026-01-04', [1, 0, 0, 0, 0, 0, 0])], -1));
   assert.throws(() => historyFromWeeklyBuckets([{ ...week('2026-01-04', [1, 0, 0, 0, 0, 0, 0]), total: 2 }], 1));

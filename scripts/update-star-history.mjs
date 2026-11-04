@@ -56,6 +56,7 @@ export function validateHistory(history) {
 // GitHub returns weekly additions, newest week first; days are Sunday through Saturday.
 export function historyFromWeeklyBuckets(buckets, currentStarCount, generatedAt = new Date().toISOString().slice(0, 10)) {
   if (!Array.isArray(buckets) || !buckets.length) throw new Error('GitHub returned no star history');
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(generatedAt) || new Date(generatedAt).toISOString().slice(0, 10) !== generatedAt) throw new Error('Invalid generated date');
   if (!Number.isSafeInteger(currentStarCount) || currentStarCount < 0) throw new Error('Invalid current star count');
 
   const weeks = [...buckets].sort((a, b) => a.week - b.week);
@@ -72,6 +73,7 @@ export function historyFromWeeklyBuckets(buckets, currentStarCount, generatedAt 
     for (let day = 0; day < 7; day++) {
       cumulative += week.days[day];
       const date = new Date((week.week + day * 86400) * 1000).toISOString().slice(0, 10);
+      if (date > generatedAt) break;
       if (points.length && date <= points.at(-1)[0]) throw new Error('Overlapping GitHub star-history weeks');
       points.push([date, cumulative]);
     }

@@ -1,27 +1,48 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { observe, renderChart, curve } from '../update-star-history.mjs';
+import { historyFromWeeklyBuckets, renderChart, curve, validateHistory } from '../update-star-history.mjs';
 
-// New README automation: no existing star-history coverage. Unit tier, no I/O.
-// Minimal risks: an unstar, a same-day rerun, a corrupt API count, and a turn in
-// the curve. These exercise the generator's public inputs and rendered outputs.
-const seed = { repository: 'onewesong/http-relay', trackingSince: '2026-10-24', points: [['2026-10-24', 100], ['2026-10-25', 120]] };
-
-test('daily observations preserve prior days and actual decreases; same-day reruns replace only today', () => {
-  const next = observe(observe(seed, '2026-10-26', 130), '2026-10-26', 115);
-  assert.deepEqual(next.points, [...seed.points, ['2026-10-26', 115]]);
-  assert.equal(seed.points.length, 2);
-  assert.match(renderChart(next), /http-relay · 115 GitHub stars/);
+const week = (date, days) => ({
+  week: Date.parse(`${date}T00:00:00Z`) / 1000,
+  total: days.reduce((sum, n) => sum + n, 0),
+  days,
 });
 
-test('invalid API counts and stale dates fail without changing history', () => {
-  for (const [day, count] of [['2026-10-26', null], ['2026-10-26', -1], ['2026-10-24', 140], ['2026-02-30', 140]]) {
-    assert.throws(() => observe(seed, day, count));
-  }
-  assert.deepEqual(seed.points, [['2026-10-24', 100], ['2026-10-25', 120]]);
+test('weekly aggregate buckets become a continuous daily cumulative history', () => {
+  const history = historyFromWeeklyBuckets([
+    week('2026-01-11', [1, 0, 2, 0, 0, 0, 0]),
+    week('2026-01-04', [0, 1, 2, 0, 0, 0, 0]),
+  ], 5, '2026-11-04');
+
+  assert.equal(history.trackingSince, '2026-01-04');
+  assert.equal(history.points.length, 14);
+  assert.deepEqual(history.points.slice(0, 4), [
+    ['2026-01-04', 0], ['2026-01-05', 1], ['2026-01-06', 3], ['2026-01-07', 3],
+  ]);
+  assert.deepEqual(history.points.slice(-7), [
+    ['2026-01-11', 4], ['2026-01-12', 4], ['2026-01-13', 6], ['2026-01-14', 6],
+    ['2026-01-15', 6], ['2026-01-16', 6], ['2026-01-17', 6],
+  ]);
+  assert.equal(history.currentStarCount, 5);
+  assert.equal(validateHistory(history), history);
 });
 
-test('rounded segments stay between observations across rises, plateaus and declines', () => {
+test('invalid weekly data and invalid current counts are rejected', () => {
+  assert.throws(() => historyFromWeeklyBuckets([], 0));
+  assert.throws(() => historyFromWeeklyBuckets([week('2026-01-04', [1, 0, 0, 0, 0, 0, 0])], -1));
+  assert.throws(() => historyFromWeeklyBuckets([{ ...week('2026-01-04', [1, 0, 0, 0, 0, 0, 0]), total: 2 }], 1));
+  assert.throws(() => historyFromWeeklyBuckets([week('2026-01-04', [1, 0, 0, 0, 0, 0, 0]), week('2026-01-04', [1, 0, 0, 0, 0, 0, 0])], 2));
+});
+
+test('rendered chart distinguishes cumulative additions from current active stars', () => {
+  const history = historyFromWeeklyBuckets([week('2026-01-04', [1, 0, 0, 0, 0, 0, 0])], 0);
+  const svg = renderChart(history);
+  assert.match(svg, /1 cumulative stars added/);
+  assert.match(svg, /Current active stars: 0/);
+  assert.doesNotMatch(svg, /NaN|Infinity/);
+});
+
+test('rounded curve segments stay between observations across rises, plateaus and declines', () => {
   const points = [[0, 0], [1, 4], [2, 4], [3, 1], [4, 8]];
   const segments = curve(points).split(' C').slice(1);
   segments.forEach((segment, i) => {
@@ -33,14 +54,4 @@ test('rounded segments stay between observations across rises, plateaus and decl
       assert.ok(value >= Math.min(y0, y1) - 0.001 && value <= Math.max(y0, y1) + 0.001);
     }
   });
-});
-
-test('single zero observation renders finite accessible SVG in all four layouts', () => {
-  const history = { ...seed, points: [['2026-10-24', 0]] };
-  for (const dark of [false, true]) for (const mobile of [false, true]) {
-    const svg = renderChart(history, { dark, mobile });
-    assert.doesNotMatch(svg, /NaN|Infinity/);
-    assert.match(svg, /http-relay · 0 GitHub stars/);
-    assert.match(svg, /Zero-based linear axes/);
-  }
 });

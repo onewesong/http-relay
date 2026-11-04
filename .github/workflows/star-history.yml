@@ -16,6 +16,7 @@ on:
     branches: [main]
     paths:
       - scripts/update-star-history.mjs
+      - scripts/__tests__/update-star-history.test.mjs
       - .github/assets/star-history/history.json
       - .github/workflows/star-history.yml
 

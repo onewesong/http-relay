@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-// Public aggregate counts only. Daily observations preserve decreases as well as growth.
+// Rebuild privacy-safe star history from GitHub's aggregate weekly API.
+// Historical points are cumulative stars added; removed stars are not subtracted.
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repository = 'onewesong/http-relay';
 const branch = 'readme-star-history';
-const seed = new URL('../.github/assets/star-history/history.json', import.meta.url);
+const apiVersion = '2026-03-10';
 
 function api(path, body) {
-  const args = ['api', `repos/${repository}${path ? `/${path}` : ''}`];
+  const args = ['api', `repos/${repository}${path ? `/${path}` : ''}`, '-H', `X-GitHub-Api-Version: ${apiVersion}`];
   if (body) args.push('--method', 'POST', '--input', '-');
   return JSON.parse(execFileSync('gh', args, {
     input: body ? JSON.stringify(body) : undefined, encoding: 'utf8',
@@ -26,28 +27,66 @@ function optionalApi(path) {
 }
 
 export function validateHistory(history) {
-  if (history?.repository !== repository || !/^\d{4}-\d{2}-\d{2}$/.test(history.trackingSince) || !Array.isArray(history.points) || !history.points.length) {
+  if (history?.repository !== repository ||
+      history?.source !== 'github-stargazers-history-api' ||
+      history?.metric !== 'cumulative-stars-added' ||
+      !/^\\d{4}-\\d{2}-\\d{2}$/.test(history.trackingSince) ||
+      !Number.isSafeInteger(history.currentStarCount) || history.currentStarCount < 0 ||
+      !Array.isArray(history.points) || !history.points.length ||
+      history.points[0][0] !== history.trackingSince) {
     throw new Error('Invalid star history');
   }
   let previous = '';
-  for (const [date, count] of history.points) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) ||
-        new Date(date).toISOString().slice(0, 10) !== date || date <= previous ||
-        !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid star observation');
+  for (const point of history.points) {
+    if (!Array.isArray(point) || point.length !== 2) throw new Error('Invalid star observation');
+    const [date, count] = point;
+    if (typeof date !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date) ||
+        !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date ||
+        date <= previous || !Number.isSafeInteger(count) || count < 0) {
+      throw new Error('Invalid star observation');
+    }
     previous = date;
+  }
+  if (history.points.some((point, i, points) => i > 0 && point[1] < points[i - 1][1])) {
+    throw new Error('Cumulative star history cannot decrease');
   }
   return history;
 }
 
-export function observe(history, date, count) {
-  validateHistory(history);
-  if (date < history.points.at(-1)[0]) throw new Error('Observation predates latest history');
-  const next = { ...history, points: history.points.filter(([day]) => day !== date).concat([[date, count]]) };
-  return validateHistory(next);
+// GitHub returns weekly additions, newest week first; days are Sunday through Saturday.
+export function historyFromWeeklyBuckets(buckets, currentStarCount, generatedAt = new Date().toISOString().slice(0, 10)) {
+  if (!Array.isArray(buckets) || !buckets.length) throw new Error('GitHub returned no star history');
+  if (!Number.isSafeInteger(currentStarCount) || currentStarCount < 0) throw new Error('Invalid current star count');
+
+  const weeks = [...buckets].sort((a, b) => a.week - b.week);
+  const points = [];
+  let cumulative = 0, previousWeek = -Infinity;
+  for (const week of weeks) {
+    if (!Number.isSafeInteger(week.week) || week.week <= previousWeek ||
+        !Array.isArray(week.days) || week.days.length !== 7 ||
+        week.days.some(n => !Number.isSafeInteger(n) || n < 0) ||
+        week.total !== week.days.reduce((sum, n) => sum + n, 0)) {
+      throw new Error('Invalid GitHub weekly star bucket');
+    }
+    previousWeek = week.week;
+    for (let day = 0; day < 7; day++) {
+      cumulative += week.days[day];
+      const date = new Date((week.week + day * 86400) * 1000).toISOString().slice(0, 10);
+      if (points.length && date <= points.at(-1)[0]) throw new Error('Overlapping GitHub star-history weeks');
+      points.push([date, cumulative]);
+    }
+  }
+  return validateHistory({
+    repository,
+    source: 'github-stargazers-history-api',
+    metric: 'cumulative-stars-added',
+    trackingSince: points[0][0],
+    generatedAt,
+    currentStarCount,
+    points,
+  });
 }
 
-// Monotone cubic Hermite interpolation. Tangents are bounded by the adjacent
-// secants, so rounding the joins never invents peaks or conceals a decline.
 export function curve(points) {
   if (points.length === 1) return `M${points[0].join(',')}`;
   const slopes = points.slice(1).map(([x, y], i) => (y - points[i][1]) / (x - points[i][0]));
@@ -74,11 +113,11 @@ export function renderChart(history, { dark = false, mobile = false } = {}) {
   const magnitude = 10 ** Math.floor(Math.log10(max));
   const step = magnitude * ([1, 2, 5, 10].find(n => n * magnitude >= max / 3) ?? 10);
   const ceiling = Math.ceil(max / step) * step;
-  const x = date => left + (Date.parse(date) - start) / Math.max(86_400_000, end - start) * (right - left);
+  const x = date => left + (Date.parse(date) - start) / Math.max(86400000, end - start) * (right - left);
   const y = count => bottom - count / ceiling * (bottom - top);
   const points = data.map(([date, count]) => [x(date), y(count)]);
   const [lastX, lastY] = points.at(-1), last = data.at(-1);
-  const tick = count => count >= 1_000_000 ? `${Number((count / 1_000_000).toFixed(1))}m` : count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : count;
+  const tick = count => count >= 1000000 ? `${Number((count / 1000000).toFixed(1))}m` : count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : count;
   const lines = [];
   for (let count = 0; count <= ceiling; count += step) {
     lines.push(`<path d="M${left} ${y(count)}H${right}" stroke="${grid}" stroke-width="0.6"/><text x="${left - 10}" y="${y(count) + 4}" text-anchor="end">${tick(count)}</text>`);
@@ -89,8 +128,8 @@ export function renderChart(history, { dark = false, mobile = false } = {}) {
     lines.push(`<text x="${x(date)}" y="${height - 12}" text-anchor="middle">${date.slice(5).replace('-', '.')}</text>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">
-  <title id="title">http-relay · ${last[1].toLocaleString('en-US')} GitHub stars</title>
-  <desc id="desc">${data[0][0]} to ${last[0]}. Zero-based linear axes. Tracking since ${history.trackingSince}; values are daily observed totals.</desc>
+  <title id="title">http-relay · ${last[1].toLocaleString('en-US')} cumulative stars added</title>
+  <desc id="desc">${data[0][0]} to ${last[0]}. Cumulative stars added from GitHub's aggregate history API; removed stars are not subtracted. Current active stars: ${history.currentStarCount}.</desc>
   <g fill="${muted}" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
     ${lines.join('\n    ')}
     <path d="${curve(points)}" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -111,45 +150,46 @@ export async function generate(history, output) {
   return files;
 }
 
+async function fetchAllWeeklyHistory() {
+  const buckets = [];
+  for (let page = 1; page <= 100; page++) {
+    const result = api(`stargazers/history?per_page=30&page=${page}`);
+    if (!Array.isArray(result)) throw new Error('Unexpected GitHub star-history response');
+    if (!result.length) return buckets;
+    buckets.push(...result);
+  }
+  throw new Error('GitHub star history exceeded the 100-page API limit');
+}
+
 async function main() {
   const args = process.argv.slice(2), publish = args.includes('--publish'), refresh = args.includes('--refresh');
   if (publish && !refresh) throw new Error('--publish requires --refresh');
+  if (!refresh) throw new Error('Use --refresh to fetch the complete GitHub star history');
   const output = resolve(args.includes('--output') ? args[args.indexOf('--output') + 1] : '.github/assets/star-history');
-  const dataPath = args.includes('--data') ? resolve(args[args.indexOf('--data') + 1]) : seed;
-  let head = null, history;
-  if (publish) {
-    head = optionalApi(`git/ref/heads/${branch}`)?.object.sha;
-    if (head) {
-      const file = api(`contents/history.json?ref=${head}`);
-      history = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
-    }
-  }
-  history ??= JSON.parse(await readFile(dataPath, 'utf8'));
-  if (refresh) {
-    const repo = api('');
-    history = observe(history, new Date().toISOString().slice(0, 10), repo.stargazers_count);
-  }
+  const repo = api('');
+  const buckets = await fetchAllWeeklyHistory();
+  const history = historyFromWeeklyBuckets(buckets, repo.stargazers_count);
   const files = await generate(history, output);
   if (publish) {
     // This dedicated branch contains only generated public assets. Never main.
+    const head = optionalApi(`git/ref/heads/${branch}`)?.object.sha ?? null;
     const tree = api('git/trees', { tree: Object.entries(files).map(([path, content]) => ({ path, mode: '100644', type: 'blob', content })) });
     if (head && api(`git/commits/${head}`).tree.sha === tree.sha) {
       console.log('Star history unchanged'); return;
     }
     const commit = api('git/commits', {
-      message: 'chore: refresh README star history\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>',
+      message: 'chore: rebuild README star history from GitHub aggregate API\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>',
       tree: tree.sha, parents: head ? [head] : [],
       author: { name: 'github-actions[bot]', email: '41898282+github-actions[bot]@users.noreply.github.com' },
     });
-    // Non-force update rejects a concurrent writer instead of overwriting it.
     if (head) {
       execFileSync('gh', ['api', '--method', 'PATCH', `repos/${repository}/git/refs/heads/${branch}`, '--input', '-'], {
-        input: JSON.stringify({ sha: commit.sha, force: false }), stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000,
+        input: JSON.stringify({ sha: commit.sha, force: false }), stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000,
       });
     } else api('git/refs', { ref: `refs/heads/${branch}`, sha: commit.sha });
     console.log(`Published ${branch} at ${commit.sha}`);
   }
-  console.log(`Generated ${history.points.at(-1)[1]} stars through ${history.points.at(-1)[0]}`);
+  console.log(`Generated ${history.points.length} daily points from ${history.trackingSince}; ${history.currentStarCount} active stars`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

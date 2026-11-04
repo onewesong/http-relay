@@ -30,7 +30,7 @@ export function validateHistory(history) {
   if (history?.repository !== repository ||
       history?.source !== 'github-stargazers-history-api' ||
       history?.metric !== 'cumulative-stars-added' ||
-      !/^\\d{4}-\\d{2}-\\d{2}$/.test(history.trackingSince) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(history.trackingSince) ||
       !Number.isSafeInteger(history.currentStarCount) || history.currentStarCount < 0 ||
       !Array.isArray(history.points) || !history.points.length ||
       history.points[0][0] !== history.trackingSince) {
@@ -40,7 +40,7 @@ export function validateHistory(history) {
   for (const point of history.points) {
     if (!Array.isArray(point) || point.length !== 2) throw new Error('Invalid star observation');
     const [date, count] = point;
-    if (typeof date !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date) ||
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
         !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date ||
         date <= previous || !Number.isSafeInteger(count) || count < 0) {
       throw new Error('Invalid star observation');

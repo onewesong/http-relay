@@ -542,3 +542,18 @@ The target is `https://api.example.com/base/v1/users?q=go`.
 - `400`: missing or invalid target URL
 - `502`: upstream connection failure or timeout
 - `500`: internal server error
+
+## Star History
+
+<p align="center">
+  <a href="https://github.com/onewesong/http-relay/stargazers">
+    <picture>
+      <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-dark-mobile.svg">
+      <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light-mobile.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light.svg">
+      <img src="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light.svg" width="100%" alt="http-relay GitHub star history">
+    </picture>
+  </a>
+</p>
+<p align="center"><sub>Every star means something.</sub></p>

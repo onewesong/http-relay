@@ -472,3 +472,18 @@ curl "http://127.0.0.1:7080/v1/users?q=go"
 - `400`：目标 URL 缺失或格式错误
 - `502`：上游连接失败或超时
 - `500`：服务内部错误
+
+## Star History
+
+<p align="center">
+  <a href="https://github.com/onewesong/http-relay/stargazers">
+    <picture>
+      <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-dark-mobile.svg">
+      <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light-mobile.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light.svg">
+      <img src="https://raw.githubusercontent.com/onewesong/http-relay/readme-star-history/stars-light.svg" width="100%" alt="http-relay GitHub star history">
+    </picture>
+  </a>
+</p>
+<p align="center"><sub>Every star means something.</sub></p>

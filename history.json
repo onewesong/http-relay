@@ -3,8 +3,8 @@
   "source": "github-stargazers-history-api",
   "metric": "cumulative-stars-added",
   "trackingSince": "2026-03-01",
-  "generatedAt": "2026-11-18",
-  "currentStarCount": 59,
+  "generatedAt": "2026-11-19",
+  "currentStarCount": 60,
   "points": [
     [
       "2026-03-01",
@@ -1056,7 +1056,11 @@
     ],
     [
       "2026-11-18",
-      59
+      60
+    ],
+    [
+      "2026-11-19",
+      60
     ]
   ]
 }
